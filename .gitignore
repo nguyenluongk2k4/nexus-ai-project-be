@@ -1,0 +1,29 @@
+# Node
+node_modules/
+
+# Build
+frontend/build/
+frontend/dist/
+
+# Python
+__pycache__/
+/*.pyc
+/venv/
+
+# Environment
+.env
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# ChromaDB (đừng ignore, cần giữ data)
+# chroma_db/
