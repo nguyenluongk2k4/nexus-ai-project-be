@@ -1,0 +1,194 @@
+# Main FastAPI Application
+# Bootstrap, mount routers, configure Swagger
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+
+from app.api import admin, chat
+from infrastructure.database.connection import init_db
+
+
+# ============================================================
+# LIFESPAN (startup/shutdown)
+# ============================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan - startup and shutdown events"""
+    # Startup
+    print("🚀 Starting NexusAI Backend...")
+    
+    # Initialize database
+    await init_db()
+    print("✅ Database initialized")
+    
+    # Pre-load AI models (optional, for faster first request)
+    try:
+        from app.deps import get_embedder, get_llm, get_vector_store
+        get_embedder()  # Load embedding model
+        print("✅ Embedding model loaded")
+        
+        # Load vector store and log document count
+        vector_store = get_vector_store()
+        doc_count = vector_store.collection.count()
+        print(f"✅ Vector store loaded: {doc_count} documents in ChromaDB")
+    except Exception as e:
+        print(f"⚠️ Could not pre-load models: {e}")
+    
+    print("🎉 NexusAI Backend ready!")
+    
+    yield
+    
+    # Shutdown
+    print("👋 Shutting down NexusAI Backend...")
+
+
+# ============================================================
+# FASTAPI APP
+# ============================================================
+
+app = FastAPI(
+    title="NexusAI API",
+    description="""
+# NexusAI - AI-powered Learning Platform API
+
+## Features
+- 🤖 **AI Chatbot** - RAG-enhanced chatbot với Gemini AI
+- 🌳 **Skill Tree** - Quản lý cây kỹ năng với closure table
+- 📚 **Learning Progress** - Theo dõi tiến độ học tập
+- 💬 **Forum** - Diễn đàn thảo luận
+- 💼 **Jobs** - Gợi ý việc làm dựa trên skills
+
+## Architecture
+- **Backend**: FastAPI + SQLAlchemy (PostgreSQL/SQLite)
+- **Vector DB**: ChromaDB for RAG
+- **AI**: Google Gemini + SentenceTransformer
+
+## Authentication
+Sử dụng JWT Bearer token cho các protected endpoints.
+    """,
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan
+)
+
+
+# ============================================================
+# CORS MIDDLEWARE
+# ============================================================
+
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# ROUTERS
+# ============================================================
+
+app.include_router(admin.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
+
+
+# ============================================================
+# ROOT ENDPOINTS
+# ============================================================
+
+@app.get("/", tags=["Health"])
+async def root():
+    """Root endpoint - API info"""
+    return {
+        "name": "NexusAI API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
+@app.get("/health", tags=["Health"])
+async def health():
+    """Health check endpoint"""
+    return {"status": "ok"}
+
+
+# ============================================================
+# CUSTOM OPENAPI SCHEMA (for better Swagger)
+# ============================================================
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title="NexusAI API",
+        version="1.0.0",
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # Add security scheme
+    openapi_schema["components"]["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+        }
+    }
+    
+    # Add tags metadata
+    openapi_schema["tags"] = [
+        {
+            "name": "Health",
+            "description": "Health check endpoints"
+        },
+        {
+            "name": "Admin",
+            "description": "Admin CRUD operations for skills, templates, resources"
+        },
+        {
+            "name": "Chat",
+            "description": "AI Chatbot endpoints (HTTP & WebSocket)"
+        },
+        {
+            "name": "Learning",
+            "description": "Learning progress and timeline management"
+        },
+        {
+            "name": "Forum",
+            "description": "Forum posts and comments"
+        },
+        {
+            "name": "Jobs",
+            "description": "Job listings and recommendations"
+        }
+    ]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
+# ============================================================
+# RUN (for development)
+# ============================================================
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

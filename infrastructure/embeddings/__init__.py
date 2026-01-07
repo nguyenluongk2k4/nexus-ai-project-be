@@ -1,0 +1,1 @@
+# Embeddings adapter module

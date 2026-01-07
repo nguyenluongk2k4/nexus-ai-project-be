@@ -25,5 +25,7 @@ Thumbs.db
 # Logs
 *.log
 
+.env
 # ChromaDB (đừng ignore, cần giữ data)
 # chroma_db/
+.env

@@ -2,6 +2,8 @@
 fastapi
 uvicorn[standard]
 python-dotenv
+pydantic>=2.0
+pydantic-settings
 
 # Google AI
 google-generativeai
@@ -13,5 +15,15 @@ torch
 # Vector Database
 chromadb
 
+# SQL Database (SQLAlchemy async)
+sqlalchemy[asyncio]>=2.0
+aiosqlite
+asyncpg  # For PostgreSQL
+
+# Authentication
+bcrypt
+PyJWT
+
 # WebSocket support
 websockets
+
