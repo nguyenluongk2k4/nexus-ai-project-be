@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Database
-    DATABASE_URL: str = "sqlite+aiosqlite:///./nexusai.db"
+    DATABASE_URL: str = "postgresql+asyncpg://nexusai:nexusai_password@localhost:5432/nexusai"
     
     # ChromaDB
     CHROMA_DB_PATH: str = "../chroma_db"
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None  # Alias
     
     # JWT
-    JWT_SECRET: str = "your-secret-key-change-in-production"
+    JWT_SECRET: str = "khe_nhat_fpt"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_DAYS: int = 7
     

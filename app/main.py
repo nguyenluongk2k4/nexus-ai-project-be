@@ -6,8 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-from app.api import admin, chat
-from infrastructure.database.connection import init_db
+# Import from modular DDD structure
+from modules.chat.api.routes import router as chat_router
+from modules.admin.api.routes import router as admin_router
+
+# Shared database
+from shared.database.connection import init_db
 
 
 # ============================================================
@@ -24,13 +28,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("✅ Database initialized")
     
-    # Pre-load AI models (optional, for faster first request)
+    # Pre-load AI models
     try:
-        from app.deps import get_embedder, get_llm, get_vector_store
-        get_embedder()  # Load embedding model
-        print("✅ Embedding model loaded")
+        from modules.chat.providers import get_llm, get_vector_store
+        get_llm()
+        print("✅ LLM model loaded")
         
-        # Load vector store and log document count
         vector_store = get_vector_store()
         doc_count = vector_store.collection.count()
         print(f"✅ Vector store loaded: {doc_count} documents in ChromaDB")
@@ -98,11 +101,11 @@ app.add_middleware(
 
 
 # ============================================================
-# ROUTERS
+# ROUTERS (from modules/)
 # ============================================================
 
-app.include_router(admin.router, prefix="/api")
-app.include_router(chat.router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 
 
 # ============================================================
