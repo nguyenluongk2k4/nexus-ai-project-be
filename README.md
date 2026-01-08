@@ -1,16 +1,46 @@
-# Backend - AI Skill Tree Chat API
+# NexusAI Backend
 
-Python FastAPI server với RAG (Retrieval-Augmented Generation) chatbot.
+FastAPI server với DDD-lite architecture, RAG Chatbot và Skill Tree management.
+
+## 🏗️ Architecture
+
+```
+backend/
+├── app/                    # Framework Layer (FastAPI)
+│   ├── main.py            # Bootstrap, CORS, lifespan
+│   ├── deps.py            # Dependency Injection
+│   ├── schemas.py         # Pydantic request/response schemas
+│   └── api/               # API endpoints
+│       ├── admin.py       # Admin CRUD endpoints
+│       └── chat.py        # Chat HTTP & WebSocket
+│
+├── domain/                 # Core Business Logic (NO framework deps)
+│   ├── entities/          # Domain entities
+│   ├── ports/             # Abstract interfaces (Hexagonal)
+│   └── services/          # Domain services
+│
+├── infrastructure/         # Adapters (implementations)
+│   ├── database/          # PostgreSQL/SQLite + SQLAlchemy
+│   ├── embeddings/        # SentenceTransformer adapter
+│   ├── llm/               # Gemini AI adapter
+│   ├── vector_store/      # ChromaDB adapter
+│   └── sync/              # Synchronization services
+│
+├── usecases/              # Application layer (orchestration)
+│
+└── config/                # Settings & environment
+```
 
 ## Prerequisites
 
 - Python >= 3.10
+- PostgreSQL (hoặc SQLite cho dev)
 - CUDA (optional, cho GPU acceleration)
 
 ## Cài đặt
 
 ```bash
-# Tạo virtual environment (khuyến khích)
+# Tạo virtual environment
 python -m venv venv
 venv\Scripts\activate  # Windows
 # source venv/bin/activate  # Linux/Mac
@@ -21,66 +51,97 @@ pip install -r requirements.txt
 
 ## Cấu hình
 
-Tạo file `.env` với nội dung:
+Copy `.env.example` thành `.env` và điền các giá trị:
 
 ```env
-GOOGLE_API_KEY=your_api_key_here
+# AI
+GOOGLE_API_KEY=your_gemini_api_key
+
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/nexusai
+
+# ChromaDB
+CHROMA_DB_PATH=../chroma_db
 ```
 
 ## Chạy Server
 
 ```bash
-python server.py
+# Development
+python -m app.main
+
+# Hoặc với uvicorn
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Hoặc với uvicorn:
+Server: http://localhost:8000
+Swagger UI: http://localhost:8000/docs
+ReDoc: http://localhost:8000/redoc
+
+## Seed Data
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+python seed_from_json.py
 ```
-
-Server sẽ chạy tại: http://localhost:8000
 
 ## API Endpoints
 
+### Health
 | Endpoint | Method | Mô tả |
 |----------|--------|-------|
+| `/` | GET | API info |
 | `/health` | GET | Health check |
-| `/session/new` | POST | Tạo session mới |
-| `/ws` | WebSocket | Chat realtime |
+
+### Admin (Skill Tree)
+| Endpoint | Method | Mô tả |
+|----------|--------|-------|
+| `/api/admin/templates` | GET/POST | List/Create skill tree templates |
+| `/api/admin/templates/{id}` | GET/PUT/DELETE | CRUD template |
+| `/api/admin/skills` | GET/POST | List/Create skills |
+| `/api/admin/resources` | GET/POST | List/Create learning resources |
+
+### Chat
+| Endpoint | Method | Mô tả |
+|----------|--------|-------|
+| `/api/chat/session` | POST | Tạo session mới |
+| `/api/chat/message` | POST | Gửi message (HTTP) |
+| `/api/chat/ws/{session_id}` | WebSocket | Chat realtime |
 
 ## WebSocket Protocol
 
 ### Gửi tin nhắn
-
 ```json
 {
   "type": "user_message",
-  "session_id": "session_xxx",
   "text": "Nội dung tin nhắn"
 }
 ```
 
 ### Nhận response
-
 ```json
 {
   "type": "bot_message",
-  "session_id": "session_xxx",
   "text": "Câu trả lời từ AI"
 }
 ```
 
-## Cấu trúc thư mục
+## Docker
 
+```bash
+# Build & run
+docker-compose up -d
+
+# Hoặc chỉ build image
+docker build -t nexusai-backend .
 ```
-backend/
-├── server.py          # FastAPI server
-├── smart_chatbot.py   # Chatbot với RAG
-├── requirements.txt   # Python dependencies
-└── .env              # Environment variables
-```
 
-## ChromaDB
+## Tech Stack
 
-Backend sử dụng ChromaDB từ thư mục `../chroma_db/` để lưu trữ vector embeddings.
+| Component | Technology |
+|-----------|------------|
+| Framework | FastAPI |
+| Database | PostgreSQL / SQLite |
+| ORM | SQLAlchemy (async) |
+| Vector DB | ChromaDB |
+| LLM | Google Gemini |
+| Embeddings | SentenceTransformer (multilingual) |
