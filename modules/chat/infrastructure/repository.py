@@ -128,3 +128,42 @@ class ChatRepositoryImpl(ChatRepositoryPort):
             ]
             
             return messages
+    
+    async def get_recent_sessions(self, limit: int = 5, offset: int = 0) -> List[ChatSession]:
+        """Get recent sessions with pagination for load more"""
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(ChatSessionModel)
+                .order_by(ChatSessionModel.updated_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            models = result.scalars().all()
+            
+            return [
+                ChatSession(
+                    id=_to_uuid(m.id),
+                    user_id=_to_uuid(m.user_id) if m.user_id else None,
+                    title=m.title,
+                    created_at=m.created_at,
+                    updated_at=m.updated_at
+                )
+                for m in models
+            ]
+    
+    async def delete_session(self, session_id: UUID) -> bool:
+        """Delete a session and its messages"""
+        async with async_session_maker() as db:
+            # Delete messages first
+            from sqlalchemy import delete
+            await db.execute(
+                delete(MessageModel).where(MessageModel.session_id == session_id)
+            )
+            
+            # Delete session
+            result = await db.execute(
+                delete(ChatSessionModel).where(ChatSessionModel.id == session_id)
+            )
+            await db.commit()
+            
+            return result.rowcount > 0

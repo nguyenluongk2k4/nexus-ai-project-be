@@ -29,6 +29,16 @@ class ChatRepositoryPort(ABC):
     @abstractmethod
     async def get_session_messages(self, session_id: UUID, limit: int = 50) -> List[Message]:
         pass
+    
+    @abstractmethod
+    async def get_recent_sessions(self, limit: int = 5, offset: int = 0) -> List[ChatSession]:
+        """Get recent sessions with pagination for load more"""
+        pass
+    
+    @abstractmethod
+    async def delete_session(self, session_id: UUID) -> bool:
+        """Delete a session and its messages"""
+        pass
 
 
 class LLMPort(ABC):

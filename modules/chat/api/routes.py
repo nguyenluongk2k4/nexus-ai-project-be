@@ -1,18 +1,40 @@
 # Chat Module - API Routes
 # HTTP and WebSocket endpoints for AI chat
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
 import logging
+from uuid import UUID
 
 from modules.chat.api.schemas import ChatMessageRequest, ChatMessageResponse, ChatSessionResponse
 from modules.chat.providers import get_chatbot_service
+from modules.auth.providers import get_jwt_service, get_user_repository
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+# Security scheme
+security = HTTPBearer()
+
+
+async def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UUID:
+    """Dependency to get current authenticated user ID from JWT token"""
+    jwt_service = get_jwt_service()
+    
+    token = credentials.credentials
+    user_id = jwt_service.get_user_id_from_token(token)
+    
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token"
+        )
+    
+    return UUID(user_id)
 
 
 # ============================================================
@@ -65,10 +87,65 @@ async def send_message(data: ChatMessageRequest):
     response_model=list[ChatSessionResponse],
     summary="Lấy danh sách chat sessions"
 )
-async def list_sessions():
-    """Lấy danh sách chat sessions của user hiện tại"""
-    # TODO: Implement with user authentication
-    return []
+async def list_sessions(limit: int = 5, offset: int = 0, user_id: UUID = Depends(get_current_user_id)):
+    """Lấy danh sách chat sessions với pagination (load more)"""
+    from modules.chat.infrastructure.repository import ChatRepositoryImpl
+    
+    repo = ChatRepositoryImpl()
+    sessions = await repo.get_recent_sessions(limit=limit, offset=offset)
+    
+    return [
+        ChatSessionResponse(
+            id=str(s.id),
+            title=s.title,
+            created_at=s.created_at,
+            updated_at=s.updated_at
+        )
+        for s in sessions
+    ]
+
+
+@router.get(
+    "/sessions/{session_id}/messages",
+    response_model=list,
+    summary="Lấy tin nhắn của session"
+)
+async def get_session_messages(session_id: str, user_id: UUID = Depends(get_current_user_id)):
+    """Lấy tất cả tin nhắn của một session"""
+    from uuid import UUID
+    from modules.chat.api.schemas import MessageResponse
+    from modules.chat.infrastructure.repository import ChatRepositoryImpl
+    
+    repo = ChatRepositoryImpl()
+    messages = await repo.get_session_messages(UUID(session_id))
+    
+    return [
+        MessageResponse(
+            id=str(m.id),
+            role=m.role.value,
+            content=m.content,
+            created_at=m.created_at
+        )
+        for m in messages
+    ]
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    summary="Xóa chat session"
+)
+async def delete_session(session_id: str, user_id: UUID = Depends(get_current_user_id)):
+    """Xóa session và tất cả tin nhắn của nó"""
+    from uuid import UUID
+    from modules.chat.infrastructure.repository import ChatRepositoryImpl
+    
+    repo = ChatRepositoryImpl()
+    deleted = await repo.delete_session(UUID(session_id))
+    
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {"message": "Session deleted successfully"}
 
 
 # ============================================================

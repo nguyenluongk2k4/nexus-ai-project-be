@@ -25,3 +25,11 @@ class ChatSessionResponse(BaseModel):
     title: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class MessageResponse(BaseModel):
+    """Response for a single message"""
+    id: str
+    role: str
+    content: str
+    created_at: datetime
