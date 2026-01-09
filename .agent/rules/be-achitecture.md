@@ -237,5 +237,9 @@ tests/
 9. Takeaway
 FastAPI là cửa
 Domain là não
+
+
+BE port 8000, FE port 3000
+
 Adapter là tay chân
 Đổi tay chân, não không đau

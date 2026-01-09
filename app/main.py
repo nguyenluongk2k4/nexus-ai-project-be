@@ -148,12 +148,16 @@ def custom_openapi():
     
     # Add security scheme
     openapi_schema["components"]["securitySchemes"] = {
-        "bearerAuth": {
+        "BearerAuth": {
             "type": "http",
             "scheme": "bearer",
-            "bearerFormat": "JWT"
+            "bearerFormat": "JWT",
+            "description": "Enter your JWT token obtained from /api/auth/login"
         }
     }
+    
+    # Add global security requirement - this makes Swagger show Authorize button
+    openapi_schema["security"] = [{"BearerAuth": []}]
     
     # Add tags metadata
     openapi_schema["tags"] = [
