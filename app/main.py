@@ -9,6 +9,7 @@ from fastapi.openapi.utils import get_openapi
 # Import from modular DDD structure
 from modules.chat.api.routes import router as chat_router
 from modules.admin.api.routes import router as admin_router
+from modules.auth.api.routes import router as auth_router
 
 # Shared database
 from shared.database.connection import init_db
@@ -104,6 +105,7 @@ app.add_middleware(
 # ROUTERS (from modules/)
 # ============================================================
 
+app.include_router(auth_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 

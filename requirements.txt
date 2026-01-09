@@ -21,8 +21,10 @@ aiosqlite
 asyncpg  # For PostgreSQL
 
 # Authentication
-bcrypt
+passlib[bcrypt]
 PyJWT
+python-multipart
+email-validator
 
 # WebSocket support
 websockets
