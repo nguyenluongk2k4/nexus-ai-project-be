@@ -30,7 +30,8 @@ CREATE TABLE chat_sessions (
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255),
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    context_data JSONB
 );
 CREATE INDEX idx_chat_sessions_user ON chat_sessions(user_id);
 
