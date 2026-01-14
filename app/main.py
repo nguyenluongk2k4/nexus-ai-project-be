@@ -10,9 +10,15 @@ from fastapi.openapi.utils import get_openapi
 from modules.chat.api.routes import router as chat_router
 from modules.admin.api.routes import router as admin_router
 from modules.auth.api.routes import router as auth_router
-
+# Skill Tree Router
+from modules.skill_tree.api.routes import router as skill_tree_router
 # Shared database
 from shared.database.connection import init_db
+from shared.logger import configure_logging, get_logger
+
+# Configure logging
+configure_logging()
+logger = get_logger(__name__, "SYSTEM")
 
 
 # ============================================================
@@ -23,30 +29,30 @@ from shared.database.connection import init_db
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown events"""
     # Startup
-    print("🚀 Starting NexusAI Backend...")
+    logger.info("Starting NexusAI Backend...")
     
     # Initialize database
     await init_db()
-    print("✅ Database initialized")
+    logger.info("Database initialized")
     
     # Pre-load AI models
     try:
         from modules.chat.providers import get_llm, get_vector_store
         get_llm()
-        print("✅ LLM model loaded")
+        logger.info("LLM model loaded")
         
         vector_store = get_vector_store()
         doc_count = vector_store.collection.count()
-        print(f"✅ Vector store loaded: {doc_count} documents in ChromaDB")
+        logger.info(f"Vector store loaded: {doc_count} documents in ChromaDB")
     except Exception as e:
-        print(f"⚠️ Could not pre-load models: {e}")
+        logger.warning(f"Could not pre-load models: {e}")
     
-    print("🎉 NexusAI Backend ready!")
+    logger.info("NexusAI Backend ready!")
     
     yield
     
     # Shutdown
-    print("👋 Shutting down NexusAI Backend...")
+    logger.info("Shutting down NexusAI Backend...")
 
 
 # ============================================================
@@ -108,6 +114,8 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+
+app.include_router(skill_tree_router, prefix="/api")
 
 
 # ============================================================
@@ -200,4 +208,7 @@ app.openapi = custom_openapi
 
 if __name__ == "__main__":
     import uvicorn
+    # Log configuration will be called again in lifespan, but good to have here too if running directly
+    # Note: re-configure might duplicate handlers if not handled in configure_logging
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+

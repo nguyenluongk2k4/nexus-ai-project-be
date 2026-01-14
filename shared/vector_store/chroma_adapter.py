@@ -64,6 +64,40 @@ class ChromaAdapter(VectorStorePort):
             print(f"Error searching: {e}")
             return []
     
+    def search_with_metadata(self, query: str, n_results: int = 5) -> List[dict]:
+        """
+        Search for similar documents and return with IDs and metadata.
+        Returns list of dicts with: id, document, distance
+        """
+        try:
+            # Encode query to vector
+            query_vector = self.embedder.encode(query).tolist()
+            
+            # Query ChromaDB with include
+            results = self.collection.query(
+                query_embeddings=[query_vector],
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            if not results['ids'] or not results['ids'][0]:
+                return []
+            
+            items = []
+            for i, doc_id in enumerate(results['ids'][0]):
+                items.append({
+                    "id": doc_id,
+                    "document": results['documents'][0][i] if results['documents'] else "",
+                    "metadata": results['metadatas'][0][i] if results.get('metadatas') else {},
+                    "distance": results['distances'][0][i] if results.get('distances') else 0
+                })
+            
+            return items
+        
+        except Exception as e:
+            print(f"Error searching with metadata: {e}")
+            return []
+    
     def add_documents(self, documents: List[str], ids: List[str]) -> None:
         """Add documents to vector store"""
         try:
