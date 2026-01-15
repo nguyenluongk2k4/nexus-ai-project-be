@@ -264,17 +264,74 @@ async def websocket_chat(websocket: WebSocket):
                             "session_id": session_id
                         }))
                         
-                        # 5. Skill Tree Generation & Persistence (Optimized)
-                        # Phase 2: Removed auto-push of tree. Frontend pulls via API.
-                        # We only trigger generation if needed, but for now we rely on explicit user actions or background workers.
-                        # Keeping it minimal: just persist if we generated something (but here we just chatted).
-                        
-                        # Note: If we want to Auto-Generate / Update tree on new messages, we should do it asynchronously 
-                        # or send a notification to client to "refetch tree".
-                        # For now, disable the heavy payload.
-                        pass
-                        
-                        # Original tree logic removed to prevent "adding" duplicate nodes and heavy traffic.
+                        # 5. Skill Tree Generation (Re-enabled)
+                        # Analyze chat and generate/update tree based on learning intent
+                        try:
+                            import time
+                            start_time = time.time()
+                            
+                            from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
+                            skill_tree_service = get_skill_tree_query_service()
+                            
+                            # Check if this is a skill tree related query
+                            logger.info(f"🔍 [WS] Checking if skill tree query...")
+                            is_tree_query = await skill_tree_service.is_skill_tree_query(text)
+                            logger.info(f"🔍 [WS] Is tree query: {is_tree_query} (took {time.time()-start_time:.2f}s)")
+                            
+                            if is_tree_query:
+                                logger.info(f"🎯 [WS] Detected skill tree query, generating tree...")
+                                
+                                # Notify frontend that tree is loading
+                                await websocket.send_text(json.dumps({
+                                    "type": "tree_loading",
+                                    "session_id": session_id
+                                }))
+                                
+                                # Generate tree nodes based on the query
+                                gen_start = time.time()
+                                tree_nodes = await skill_tree_service.query(text)
+                                logger.info(f"⏱️ [WS] Tree generation took {time.time()-gen_start:.2f}s, got {len(tree_nodes) if tree_nodes else 0} nodes")
+                                
+                                if tree_nodes:
+                                    # Build nodes data for frontend
+                                    nodes_data = [
+                                        {
+                                            "id": node.id,
+                                            "name": node.name,
+                                            "description": node.description,
+                                            "type": node.type,
+                                            "parentId": node.parent_id,
+                                            "level": node.level,
+                                            "filled": True,
+                                            "metadata": node.metadata
+                                        }
+                                        for node in tree_nodes
+                                    ]
+                                    
+                                    # Send tree nodes directly to frontend via WS
+                                    await websocket.send_text(json.dumps({
+                                        "type": "tree_nodes",
+                                        "session_id": session_id,
+                                        "nodes": nodes_data
+                                    }))
+                                    logger.info(f"✅ [WS] Sent {len(nodes_data)} generated tree nodes")
+                                    
+                                    # Also persist tree to session context for API retrieval
+                                    try:
+                                        await chatbot.chat_repo.update_session_context(
+                                            UUID(session_id), 
+                                            {"tree_nodes": nodes_data}
+                                        )
+                                        logger.info(f"💾 [WS] Saved tree to session context")
+                                    except Exception as save_err:
+                                        logger.warning(f"⚠️ [WS] Could not save tree to context: {save_err}")
+                                else:
+                                    logger.warning(f"⚠️ [WS] Tree generation returned empty/null")
+                                    
+                        except Exception as tree_err:
+                            import traceback
+                            logger.error(f"⚠️ [WS] Tree generation error (non-fatal): {tree_err}")
+                            logger.error(f"⚠️ [WS] Traceback: {traceback.format_exc()}")
 
                         
                     except Exception as inference_err:

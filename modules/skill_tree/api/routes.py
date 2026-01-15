@@ -58,3 +58,28 @@ async def update_resource_progress(
     Update learning progress (status, percentage) for a resource.
     """
     return await usecase.execute(resource_id, user_id, data.status, data.progress_percent)
+
+
+from modules.skill_tree.infrastructure.repository import get_skill_tree_repository
+
+@router.get("/nodes/{node_id}/children")
+async def get_node_children(
+    node_id: str,
+    user_id: UUID = Depends(get_current_user_id)
+):
+    """
+    LAZY LOADING: Get children (level 2 + level 3) of a specific node.
+    Called when user clicks on a level 1 node to expand its subtree.
+    """
+    try:
+        node_uuid = UUID(node_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid node_id format")
+    
+    repo = get_skill_tree_repository()
+    result = await repo.get_node_children(node_uuid)
+    
+    if result is None:
+        return {"nodes": [], "edges": []}
+    
+    return result
