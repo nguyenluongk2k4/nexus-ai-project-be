@@ -81,3 +81,75 @@ class LearningResourceModel(Base):
     
     # Relationships
     skill_node: Mapped["TemplateSkillNodeModel"] = relationship(back_populates="resources")
+    progress: Mapped[List["LearningProgressModel"]] = relationship(back_populates="resource")
+
+
+class LearningProgressModel(Base):
+    """Learning Progress - user progress on a resource"""
+    __tablename__ = "learning_progress"
+    
+    id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    resource_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("learning_resources.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(String(20), default='not_started')  # not_started, in_progress, completed
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    rating: Mapped[Optional[int]] = mapped_column(Integer)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # Relationships
+    resource: Mapped["LearningResourceModel"] = relationship(back_populates="progress")
+
+
+class UserSkillTreeModel(Base):
+    """User Skill Tree - specific instance for a user"""
+    __tablename__ = "user_skill_trees"
+    
+    id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    template_id: Mapped[Optional[uuid_module.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("skill_tree_templates.id"))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # Relationships
+    nodes: Mapped[List["UserSkillNodeModel"]] = relationship(back_populates="tree")
+
+
+class UserSkillNodeModel(Base):
+    """User Skill Node - tracks status and progress"""
+    __tablename__ = "user_skill_nodes"
+    
+    id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tree_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("user_skill_trees.id", ondelete="CASCADE"))
+    original_node_id: Mapped[Optional[uuid_module.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("template_skill_nodes.id"))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    icon: Mapped[Optional[str]] = mapped_column(String(50))
+    color: Mapped[Optional[str]] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default='not_started')
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    position_x: Mapped[Optional[int]] = mapped_column(Integer)
+    position_y: Mapped[Optional[int]] = mapped_column(Integer)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # Relationships
+    tree: Mapped["UserSkillTreeModel"] = relationship(back_populates="nodes")
+
+
+class UserSkillPathModel(Base):
+    """Closure table for user skill tree hierarchy"""
+    __tablename__ = "user_skill_paths"
+    
+    ancestor_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("user_skill_nodes.id", ondelete="CASCADE"), primary_key=True)
+    descendant_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("user_skill_nodes.id", ondelete="CASCADE"), primary_key=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+
+

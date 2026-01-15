@@ -264,59 +264,18 @@ async def websocket_chat(websocket: WebSocket):
                             "session_id": session_id
                         }))
                         
-                        # 5. Skill Tree Generation & Persistence (Safely Wrapped)
-                        try:
-                            from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
-                            skill_tree_service = get_skill_tree_query_service()
-                            
-                            # Notify frontend of loading
-                            await websocket.send_text(json.dumps({"type": "tree_loading"}))
-                            
-                            # Query logic
-                            tree_nodes = await skill_tree_service.query(text)
-                            
-                            if tree_nodes:
-                                nodes_data = [
-                                    {
-                                        "id": node.id,
-                                        "name": node.name,
-                                        "description": node.description,
-                                        "type": node.type,
-                                        "parentId": node.parent_id,
-                                        "level": node.level,
-                                        "metadata": node.metadata
-                                    }
-                                    for node in tree_nodes
-                                ]
-                                
-                                # A. PERSISTENCE (Fail-safe)
-                                try:
-                                    # Ensure update_session_context method exists
-                                    if hasattr(chatbot.chat_repo, 'update_session_context'):
-                                        await chatbot.chat_repo.update_session_context(
-                                            UUID(session_id), 
-                                            {"tree_nodes": nodes_data}
-                                        )
-                                        logger.info(f"💾 [WS] Persisted tree to session {session_id}")
-                                    else:
-                                        logger.warning("⚠️ [WS] Repo missing update_session_context")
-                                except Exception as save_err:
-                                    logger.error(f"❌ [WS] Persistence failed (ignoring): {save_err}")
-                                
-                                # B. SEND TO FRONTEND
-                                payload = {
-                                    "type": "tree_nodes",
-                                    "nodes": nodes_data
-                                }
-                                await websocket.send_text(json.dumps(payload))
-                                
+                        # 5. Skill Tree Generation & Persistence (Optimized)
+                        # Phase 2: Removed auto-push of tree. Frontend pulls via API.
+                        # We only trigger generation if needed, but for now we rely on explicit user actions or background workers.
+                        # Keeping it minimal: just persist if we generated something (but here we just chatted).
+                        
+                        # Note: If we want to Auto-Generate / Update tree on new messages, we should do it asynchronously 
+                        # or send a notification to client to "refetch tree".
+                        # For now, disable the heavy payload.
+                        pass
+                        
+                        # Original tree logic removed to prevent "adding" duplicate nodes and heavy traffic.
 
-                                
-                                # C. LOAD RESOURCES - REMOVED (Client fetches via API)
-                                # Resources are now loaded on-demand via GET /api/skill-tree/nodes/{id}/resources
-                                    
-                        except Exception as tree_error:
-                            logger.error(f"❌ [WS] Tree Service Error: {tree_error}", exc_info=True)
                         
                     except Exception as inference_err:
                         logger.error(f"❌ [WS] Inference Error: {inference_err}")
