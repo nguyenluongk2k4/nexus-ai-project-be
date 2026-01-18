@@ -14,6 +14,10 @@ from modules.auth.api.routes import router as auth_router
 from modules.skill_tree.api.routes import router as skill_tree_router
 # Forum Router
 from modules.forum.api.router import router as forum_router
+# Profile Router
+from modules.profile.api.routes import router as profile_router
+# Purchase Router
+from modules.purchase.api.routes import router as purchase_router
 # Shared database
 from shared.database.connection import init_db
 from shared.logger import configure_logging, get_logger
@@ -96,6 +100,8 @@ Sử dụng JWT Bearer token cho các protected endpoints.
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:4173",
@@ -121,6 +127,8 @@ app.include_router(chat_router, prefix="/api")
 
 app.include_router(skill_tree_router, prefix="/api")
 app.include_router(forum_router)  # Already has /api/forum prefix
+app.include_router(profile_router, prefix="/api")
+app.include_router(purchase_router, prefix="/api")
 
 
 # ============================================================
