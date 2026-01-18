@@ -387,27 +387,36 @@ JSON only, không text khác."""
                             db_node = db_nodes_by_name[0]
                 
                 if db_node:
-                    # Determine hierarchy (heuristic)
-                    level = 1 if i < 3 else 2
-                    
-                    # Logic parent_id assignment
-                    if level == 1:
+                    # Determine hierarchy: level 1 (2 abilities), level 2 (3 skills), level 3 (3 knowledge)
+                    if i < 2:
+                        level = 1
                         parent_id = root_id
-                    else:
-                        # Map to one of the first 3 nodes (indices 1, 2, 3 in nodes list)
-                        # Ensure we have enough nodes, otherwise fallback to root
-                        parent_idx = (i % 3) + 1
+                        node_type = "ability"
+                    elif i < 5:
+                        level = 2
+                        # Map to one of the ability nodes (indices 1, 2 in nodes list)
+                        parent_idx = (i % 2) + 1
                         if parent_idx < len(nodes):
                             parent_id = nodes[parent_idx].id
                         else:
                             parent_id = root_id
+                        node_type = "skill"
+                    else:
+                        level = 3
+                        # Map to one of the skill nodes (indices 3, 4, 5 in nodes list)
+                        skill_idx = 3 + ((i - 5) % 3)
+                        if skill_idx < len(nodes):
+                            parent_id = nodes[skill_idx].id
+                        else:
+                            parent_id = root_id
+                        node_type = "knowledge"
                     
                     # Use real DB data
                     nodes.append(TreeNodeResult(
                         id=str(db_node.id),
                         name=db_node.name,
                         description=db_node.description,
-                        type="ability" if level == 1 else "skill",
+                        type=node_type,
                         level=level,
                         parent_id=parent_id,
                         metadata={
@@ -417,17 +426,27 @@ JSON only, không text khác."""
                     ))
                     print(f"  ✅ Found in DB: {db_node.name} ({db_node.id})")
                 else:
-                    # Fallback if not in DB
-                    level = 1 if i < 3 else 2
-                    
-                    if level == 1:
+                    # Fallback if not in DB - same level logic
+                    if i < 2:
+                        level = 1
                         parent_id = root_id
-                    else:
-                        parent_idx = (i % 3) + 1
+                        node_type = "ability"
+                    elif i < 5:
+                        level = 2
+                        parent_idx = (i % 2) + 1
                         if parent_idx < len(nodes):
                             parent_id = nodes[parent_idx].id
                         else:
                             parent_id = root_id
+                        node_type = "skill"
+                    else:
+                        level = 3
+                        skill_idx = 3 + ((i - 5) % 3)
+                        if skill_idx < len(nodes):
+                            parent_id = nodes[skill_idx].id
+                        else:
+                            parent_id = root_id
+                        node_type = "knowledge"
                     
                     # Use extracted name or truncate raw name
                     display_name = metadata.get("name") or (raw_name[:50] + "..." if len(raw_name) > 50 else raw_name)
@@ -436,7 +455,7 @@ JSON only, không text khác."""
                         id=f"node-{i}",
                         name=display_name,
                         description=f"Skill: {display_name}",
-                        type="ability" if level == 1 else "skill",
+                        type=node_type,
                         level=level,
                         parent_id=parent_id
                     ))
@@ -450,7 +469,8 @@ JSON only, không text khác."""
 
     async def query(
         self, 
-        message: str
+        message: str,
+        max_level: int = None  # None = all levels, 1 = lazy load (root + abilities)
     ) -> Optional[List[TreeNodeResult]]:
         """
         Main entry point: Full pipeline to process message and return tree nodes.
@@ -460,9 +480,13 @@ JSON only, không text khác."""
         2. Search ChromaDB for candidate nodes
         3. Use Gemini to select best nodes for tree
         4. Build tree structure
+        
+        Args:
+            message: User's learning query
+            max_level: Maximum level to return (None=all, 1=lazy load)
         """
         print(f"\n{'='*60}")
-        print(f"🚀 [SkillTree] Processing query: '{message}'")
+        print(f"🚀 [SkillTree] Processing query: '{message}' (max_level={max_level})")
         print(f"{'='*60}")
         
         # Step 1: Process question with Gemini
@@ -490,6 +514,11 @@ JSON only, không text khác."""
         
         # Step 4: Build tree
         tree_nodes = await self.build_tree_from_db(selected_nodes, main_topic)
+        
+        # Filter by max_level if specified
+        if max_level is not None and tree_nodes:
+            tree_nodes = [n for n in tree_nodes if n.level <= max_level]
+            print(f"📊 [SkillTree] Filtered to {len(tree_nodes)} nodes (max_level={max_level})")
         
         print(f"\n✅ [SkillTree] Returning {len(tree_nodes)} tree nodes")
         return tree_nodes
