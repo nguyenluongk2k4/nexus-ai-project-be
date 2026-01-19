@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://nexusai:nexusai_password@localhost:5432/nexusai"
     
     # ChromaDB
-    CHROMA_DB_PATH: str = "../chroma_db"
+    CHROMA_MODE: str = "embedded"  # "embedded" or "server"
+    CHROMA_HOST: str = "localhost"  # For server mode
+    CHROMA_PORT: int = 8001  # For server mode
+    CHROMA_DB_PATH: str = "../chroma_db"  # For embedded mode
     CHROMA_COLLECTION: str = "ksa_project"
     
     # Google AI
@@ -35,6 +38,7 @@ class Settings(BaseSettings):
     
     # LLM Model
     LLM_MODEL: str = "gemini-2.5-flash"
+    SKILL_MATCH_THRESHOLD: float = 0.6
     
     @property
     def gemini_key(self) -> Optional[str]:

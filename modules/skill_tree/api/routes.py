@@ -9,6 +9,12 @@ from modules.auth.api.deps import get_current_user_id
 
 router = APIRouter(prefix="/skill-tree", tags=["Skill Tree"])
 
+
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import json
+import asyncio
+
 from .schemas import ResourceResponse
 
 # Class definition removed, imported from schemas
@@ -26,7 +32,11 @@ async def get_node_resources(
     """
     Get learning resources for a specific node.
     """
-    return await usecase.execute(node_id, user_id)
+    result = await usecase.execute(node_id, user_id)
+    # Ensure we always return a list, not dict
+    if not result or isinstance(result, dict):
+        return []
+    return result
 
 
 from .deps import get_session_skill_tree_usecase
@@ -73,6 +83,10 @@ async def get_node_children(
     LAZY LOADING: Get children of a specific node.
     Checks session context for generated trees, then falls back to database.
     """
+    print(f"\n🔍 [API] get_node_children called:")
+    print(f"  - node_id: {node_id}")
+    print(f"  - session_id: {session_id}")
+    
     children_nodes = []
     
     # Step 1: Try session context first (for generated trees)
@@ -82,10 +96,14 @@ async def get_node_children(
             chat_repo = ChatRepositoryImpl()
             session = await chat_repo.get_session(UUID(session_id))
             
+            print(f"  - session found: {session is not None}")
+            
             if session and session.context_data:
                 tree_nodes = session.context_data.get("tree_nodes", [])
+                print(f"  - tree_nodes count: {len(tree_nodes)}")
                 if tree_nodes:
-                    children_nodes = [n for n in tree_nodes if n.get("parentId") == node_id]
+                    children_nodes = [n for n in tree_nodes if n.get("parentId") == node_id or n.get("parent_id") == node_id]
+                    print(f"  - children found in session: {len(children_nodes)}")
         except Exception as e:
             print(f"⚠️ Session context lookup failed: {e}")
     
@@ -124,13 +142,80 @@ async def get_node_children(
         })
     
     print(f"🌳 Found {len(children_nodes)} children from session context")
+    print(f"🌳 Found {len(children_nodes)} children from session context")
     return {"nodes": nodes, "edges": edges}
 
+@router.get("/nodes/{node_id}/alternatives")
+async def get_node_alternatives(
+    node_id: str,
+    level: int,
+    session_id: Optional[str] = Query(None),
+    node_name: Optional[str] = Query(None),
+    user_id: UUID = Depends(get_current_user_id)
+):
+    """
+    Get alternative nodes for a specific node to support swapping.
+    Queries DB for node details and uses node name as search context.
+    """
+    from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
+    from modules.skill_tree.infrastructure.repository import get_skill_tree_repository
+    
+    service = get_skill_tree_query_service()
+    repo = get_skill_tree_repository()
+    
+    # STEP 1: Get actual node from DB to use its real name
+    search_context = "Machine Learning"  # Default fallback
+    
+    try:
+        # Try to parse node_id as UUID
+        from uuid import UUID as parse_uuid
+        try:
+            # get_node_by_id expects string
+            db_node = await repo.get_node_by_id(node_id)
+            if db_node:
+                search_context = db_node.name
+                print(f"✅ Found node in DB: {db_node.name}")
+        except Exception as e:
+            print(f"⚠️ Error querying DB for node: {e}")
+            
+        # If still no context and session exists, use session title
+        if search_context == "Machine Learning" and session_id:
+            from modules.chat.infrastructure.repository import ChatRepositoryImpl
+            chat_repo = ChatRepositoryImpl()
+            session = await chat_repo.get_session(UUID(session_id))
+            if session and session.title:
+                search_context = session.title
+    except Exception as e:
+        print(f"⚠️ Error fetching node context: {e}")
+    
+    # STEP 2: Get existing node IDs from session to avoid duplicates
+    existing_node_ids = []
+    if session_id:
+        try:
+            from modules.chat.infrastructure.repository import ChatRepositoryImpl
+            chat_repo = ChatRepositoryImpl()
+            session = await chat_repo.get_session(UUID(session_id))
+            if session and session.context_data:
+                tree_nodes = session.context_data.get("tree_nodes", [])
+                existing_node_ids = [n.get("id") for n in tree_nodes]
+                print(f"  - Found {len(existing_node_ids)} existing nodes in session")
+        except Exception as e:
+            print(f"⚠️ Error fetching session context: {e}")
 
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-import json
-import asyncio
+    print(f"\n🔍 [API] get_node_alternatives called:")
+    print(f"  - node_id: {node_id}")
+    print(f"  - level: {level}")
+    print(f"  - search_context: {search_context}")
+    
+    # Pass existing IDs to exclude them from alternatives
+    result = await service.find_alternatives(
+        level, 
+        search_context, 
+        "", 
+        existing_node_ids=existing_node_ids
+    )
+    print(f"  - result count: {len(result)}\n")
+    return result
 
 class TreeGenerateRequest(BaseModel):
     message: str
@@ -203,3 +288,26 @@ async def generate_skill_tree(
             "X-Accel-Buffering": "no"
         }
     )
+class SwapNodeRequest(BaseModel):
+    original_node_id: str
+    new_node: dict
+
+@router.post("/session/{session_id}/swap")
+async def swap_session_node(
+    session_id: str,
+    payload: SwapNodeRequest,
+    user_id: UUID = Depends(get_current_user_id)
+):
+    """
+    Swap a node in the session's skill tree with a new one.
+    Removes descendants of the swapped node to ensure consistency.
+    """
+    from modules.skill_tree.domain.services.skill_tree_swap import get_skill_tree_swap_service
+    service = get_skill_tree_swap_service()
+    
+    updated_tree = await service.swap_node(UUID(session_id), payload.original_node_id, payload.new_node)
+    
+    if updated_tree is None:
+        raise HTTPException(status_code=400, detail="Failed to swap node: Node not found or session invalid")
+        
+    return {"status": "success", "nodes": updated_tree}

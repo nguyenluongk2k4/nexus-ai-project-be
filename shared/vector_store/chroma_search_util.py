@@ -44,14 +44,25 @@ class ChromaSearchUtil:
             print(f"ChromaDB search error for '{query}': {e}")
             return []
     
-    def search_with_metadata(self, queries: List[str], n_results_per_query: int = 5, max_total: int = 15) -> List[dict]:
+    def search_with_metadata(
+        self, 
+        queries: List[str], 
+        n_results_per_query: int = 5, 
+        max_total: int = 15,
+        metadata_filter: dict = None
+    ) -> List[dict]:
         """
         Search with multiple queries and return documents with metadata (IDs).
+        Optionally filter by metadata (e.g., {"node_type": "ability"}).
         """
         all_items = []
         for query in queries:
-            # Call adapter's search_with_metadata
-            items = self.vector_store.search_with_metadata(query, n_results=n_results_per_query)
+            # Call adapter's search_with_metadata with filter
+            items = self.vector_store.search_with_metadata(
+                query, 
+                n_results=n_results_per_query,
+                where=metadata_filter
+            )
             all_items.extend(items)
             
         # Deduplicate
@@ -64,6 +75,17 @@ class ChromaSearchUtil:
                 unique_items.append(item)
                 
         return unique_items[:max_total]
+
+    def batch_search(self, queries: List[str], n_results_per_query: int = 5, metadata_filter: dict = None) -> List[List[dict]]:
+        """
+        Perform batch search for multiple queries. 
+        Returns List of List[dict], preserving order of queries.
+        """
+        return self.vector_store.batch_search_with_metadata(
+            queries, 
+            n_results=n_results_per_query, 
+            where=metadata_filter
+        )
 
 
 # Singleton getter

@@ -16,7 +16,8 @@ from modules.skill_tree.infrastructure.repository import get_skill_tree_reposito
 class TreeNodeResult:
     """Node result for frontend tree visualization"""
     id: str
-    name: str
+    name: str  # Short name for visualization
+    full_name: Optional[str] = None  # Full name for details/tooltips
     description: Optional[str] = None
     type: str = "skill"  # root, specialization, ability, skill, knowledge
     parent_id: Optional[str] = None
@@ -238,15 +239,51 @@ Trả về JSON only, không có text khác."""
     async def search_chroma(self, keywords: List[str]) -> List[dict]:
         """
         Step 2: Search ChromaDB for candidate nodes using keywords.
+        Search separately by type to ensure diversity.
         Returns list of dicts with keys: id, document, metadata, distance.
         """
         try:
-            # Use search_with_metadata to get IDs
-            results = self.chroma_util.search_with_metadata(keywords, n_results_per_query=5, max_total=15)
-            print(f"🔍 [Step2] ChromaDB found {len(results)} candidates")
-            return results
+            all_results = []
+            
+            # Search for Abilities (level 1) - need 2, get 5 for selection
+            print(f"  🔍 Searching abilities...")
+            ability_results = self.chroma_util.search_with_metadata(
+                keywords, 
+                n_results_per_query=2,
+                max_total=5,
+                metadata_filter={"node_type": "ability"}
+            )
+            all_results.extend(ability_results)
+            print(f"     Found {len(ability_results)} abilities")
+            
+            # Search for Skills (level 2) - need 4, get 8 for selection
+            print(f"  🔍 Searching skills...")
+            skill_results = self.chroma_util.search_with_metadata(
+                keywords,
+                n_results_per_query=3,
+                max_total=8,
+                metadata_filter={"node_type": "skill"}
+            )
+            all_results.extend(skill_results)
+            print(f"     Found {len(skill_results)} skills")
+            
+            # Search for Knowledge (level 3) - need 8, get 12 for selection
+            print(f"  🔍 Searching knowledge...")
+            knowledge_results = self.chroma_util.search_with_metadata(
+                keywords,
+                n_results_per_query=4,
+                max_total=12,
+                metadata_filter={"node_type": "knowledge"}
+            )
+            all_results.extend(knowledge_results)
+            print(f"     Found {len(knowledge_results)} knowledge")
+            
+            print(f"🔍 [Step2] ChromaDB found {len(all_results)} candidates total")
+            return all_results
         except Exception as e:
             print(f"❌ [Step2] ChromaDB search error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def is_valid_uuid(self, val):
@@ -267,7 +304,8 @@ Trả về JSON only, không có text khác."""
         # Number candidates for easy selection (use 'document' as display name)
         # Handle cases where document might be long text
         display_candidates = []
-        for i, c in enumerate(candidates[:15]):
+        display_candidates = []
+        for i, c in enumerate(candidates[:25]):
             doc = c.get('document', 'Unknown')
             # Try to get short name from metadata if available
             meta = c.get('metadata', {}) or {}
@@ -276,7 +314,7 @@ Trả về JSON only, không có text khác."""
             
         numbered_candidates = "\n".join(display_candidates)
         
-        prompt = f"""Từ danh sách skills dưới đây, chọn 5-8 skills phù hợp nhất để tạo skill tree cho user.
+        prompt = f"""Từ danh sách skills dưới đây, chọn 14 skills phù hợp nhất để tạo skill tree cho user.
 
 USER REQUEST: "{message}"
 MAIN TOPIC: "{main_topic}"
@@ -318,7 +356,11 @@ JSON only, không text khác."""
 
     async def build_tree_from_db(self, selected_items: List[dict], main_topic: str) -> List[TreeNodeResult]:
         """
-        Step 4: Fetch real data from PostgreSQL using IDs first, then Names.
+        Step 4: Build balanced tree structure:
+        - 2 Abilities (level 1)
+        - 2 Skills per Ability (level 2) = 4 total
+        - 2 Knowledge per Skill (level 3) = 8 total
+        Total: 1 root + 2 + 4 + 8 = 15 nodes
         """
         if not selected_items:
             return [
@@ -346,126 +388,116 @@ JSON only, không text khác."""
             parent_id=None
         ))
         
-        for i, item in enumerate(selected_items[:8]):
-            raw_id = item.get("id")
-            raw_name = item.get("name", "Unknown")
+        # Group items by level
+        abilities = []
+        skills = []
+        knowledge = []
+        
+        for item in selected_items:
             metadata = item.get("metadata") or {}
+            node_type = metadata.get("node_type", "knowledge")
             
-            # 1. Determine best ID to query
-            target_ids = []
-            if self.is_valid_uuid(raw_id):
-                target_ids.append(raw_id)
-            
-            # Check metadata for alternate IDs
-            if self.is_valid_uuid(metadata.get("id")):
-                target_ids.append(metadata.get("id"))
-            if self.is_valid_uuid(metadata.get("node_id")):
-                target_ids.append(metadata.get("node_id"))
-            if self.is_valid_uuid(metadata.get("skill_id")):
-                target_ids.append(metadata.get("skill_id"))
-                
-            db_node = None
-            try:
-                # Try ID search
-                if target_ids:
-                    # Remove duplicates and query
-                    target_ids = list(set(target_ids))
-                    db_nodes_by_id = await repo.get_nodes_by_ids(target_ids)
-                    if db_nodes_by_id:
-                        db_node = db_nodes_by_id[0]
-                
-                # 2. Fallback to Name search
-                if not db_node:
-                    # Try to find a good name to search
-                    search_name = metadata.get("name") or metadata.get("title")
-                    if not search_name and raw_name and len(raw_name) < 150:
-                        search_name = raw_name
-                        
-                    if search_name:
-                        db_nodes_by_name = await repo.search_nodes_by_name(search_name, limit=1)
-                        if db_nodes_by_name:
-                            db_node = db_nodes_by_name[0]
-                
-                if db_node:
-                    # Determine hierarchy: level 1 (2 abilities), level 2 (3 skills), level 3 (3 knowledge)
-                    if i < 2:
-                        level = 1
-                        parent_id = root_id
-                        node_type = "ability"
-                    elif i < 5:
-                        level = 2
-                        # Map to one of the ability nodes (indices 1, 2 in nodes list)
-                        parent_idx = (i % 2) + 1
-                        if parent_idx < len(nodes):
-                            parent_id = nodes[parent_idx].id
-                        else:
-                            parent_id = root_id
-                        node_type = "skill"
-                    else:
-                        level = 3
-                        # Map to one of the skill nodes (indices 3, 4, 5 in nodes list)
-                        skill_idx = 3 + ((i - 5) % 3)
-                        if skill_idx < len(nodes):
-                            parent_id = nodes[skill_idx].id
-                        else:
-                            parent_id = root_id
-                        node_type = "knowledge"
-                    
-                    # Use real DB data
-                    nodes.append(TreeNodeResult(
-                        id=str(db_node.id),
-                        name=db_node.name,
-                        description=db_node.description,
-                        type=node_type,
-                        level=level,
-                        parent_id=parent_id,
-                        metadata={
-                            "difficultyLevel": db_node.difficulty_level or "beginner",
-                            "estimatedHours": db_node.estimated_hours or 5
-                        }
-                    ))
-                    print(f"  ✅ Found in DB: {db_node.name} ({db_node.id})")
-                else:
-                    # Fallback if not in DB - same level logic
-                    if i < 2:
-                        level = 1
-                        parent_id = root_id
-                        node_type = "ability"
-                    elif i < 5:
-                        level = 2
-                        parent_idx = (i % 2) + 1
-                        if parent_idx < len(nodes):
-                            parent_id = nodes[parent_idx].id
-                        else:
-                            parent_id = root_id
-                        node_type = "skill"
-                    else:
-                        level = 3
-                        skill_idx = 3 + ((i - 5) % 3)
-                        if skill_idx < len(nodes):
-                            parent_id = nodes[skill_idx].id
-                        else:
-                            parent_id = root_id
-                        node_type = "knowledge"
-                    
-                    # Use extracted name or truncate raw name
-                    display_name = metadata.get("name") or (raw_name[:50] + "..." if len(raw_name) > 50 else raw_name)
-                    
-                    nodes.append(TreeNodeResult(
-                        id=f"node-{i}",
-                        name=display_name,
-                        description=f"Skill: {display_name}",
-                        type=node_type,
-                        level=level,
-                        parent_id=parent_id
-                    ))
-                    print(f"  ⚠️ Not in DB, using name: {display_name}")
-                    
-            except Exception as e:
-                print(f"  ❌ Error fetching node '{str(raw_name)[:30]}...': {e}")
+            if node_type == "ability":
+                abilities.append(item)
+            elif node_type == "skill":
+                skills.append(item)
+            else:  # knowledge
+                knowledge.append(item)
+        
+        print(f"  📊 Distribution: {len(abilities)} abilities, {len(skills)} skills, {len(knowledge)} knowledge")
+        
+        # If not enough abilities/skills, we need to pad with available nodes
+        if len(abilities) < 2 or len(skills) < 4:
+            print(f"  ⚠️ WARNING: Not enough abilities ({len(abilities)}/2) or skills ({len(skills)}/4)")
+            print(f"     Consider improving ChromaDB search to return diverse node types")
+        
+        # Build tree with 2-2-2 structure
+        # Take first 2 abilities
+        for i, item in enumerate(abilities[:2]):
+            await self._add_node_to_tree(item, i, root_id, nodes, repo, "ability", 1)
+        
+        # Take first 4 skills (2 per ability)
+        for i, item in enumerate(skills[:4]):
+            # Determine parent: skill 0,1 -> ability 0; skill 2,3 -> ability 1
+            ability_idx = 1 + (i // 2)  # nodes[1] or nodes[2]
+            parent_id = nodes[ability_idx].id if ability_idx < len(nodes) else root_id
+            await self._add_node_to_tree(item, i, parent_id, nodes, repo, "skill", 2)
+        
+        # Take first 8 knowledge (2 per skill)
+        for i, item in enumerate(knowledge[:8]):
+            # Determine parent: knowledge 0,1 -> skill 0; knowledge 2,3 -> skill 1, etc.
+            skill_idx = 3 + (i // 2)  # nodes[3], nodes[4], nodes[5], nodes[6]
+            parent_id = nodes[skill_idx].id if skill_idx < len(nodes) else root_id
+            await self._add_node_to_tree(item, i, parent_id, nodes, repo, "knowledge", 3)
         
         print(f"🌳 [Step4] Built tree with {len(nodes)} nodes from PostgreSQL")
         return nodes
+    
+    async def _add_node_to_tree(
+        self,
+        item: dict,
+        index: int,
+        parent_id: str,
+        nodes: List[TreeNodeResult],
+        repo,
+        expected_type: str,
+        expected_level: int
+    ):
+        """Helper to add a node to the tree"""
+        raw_id = item.get("id")
+        metadata = item.get("metadata") or {}
+        raw_name = metadata.get("name", item.get("document", "Unknown"))
+        
+        db_node = None
+        try:
+            if self.is_valid_uuid(raw_id):
+                db_nodes_by_id = await repo.get_nodes_by_ids([raw_id])
+                if db_nodes_by_id:
+                    db_node = db_nodes_by_id[0]
+            
+            if not db_node:
+                search_name = metadata.get("name") or raw_name
+                if search_name and len(search_name) < 150:
+                    db_nodes_by_name_search = await repo.search_nodes_by_name(search_name, limit=1)
+                    if db_nodes_by_name_search:
+                        db_node = db_nodes_by_name_search[0]
+            
+            if db_node:
+                display_name = db_node.name[:50] + "..." if len(db_node.name) > 50 else db_node.name
+                
+                node_result = TreeNodeResult(
+                    id=str(db_node.id),
+                    name=display_name,
+                    full_name=db_node.name,
+                    description=db_node.description,
+                    type=expected_type,
+                    level=expected_level,
+                    parent_id=parent_id,
+                    metadata={
+                        "difficultyLevel": db_node.difficulty_level or "beginner",
+                        "estimatedHours": db_node.estimated_hours or 5
+                    }
+                )
+                nodes.append(node_result)
+                print(f"  ✅ Added {expected_type}: {db_node.name[:40]}")
+            else:
+                # Fallback
+                display_name = metadata.get("name") or (raw_name[:50] + "..." if len(raw_name) > 50 else raw_name)
+                full_node_name = metadata.get("name") or raw_name
+                
+                node_result = TreeNodeResult(
+                    id=f"node-{expected_type}-{index}",
+                    name=display_name,
+                    full_name=full_node_name,
+                    description=metadata.get("description", f"{expected_type}: {full_node_name}"),
+                    type=expected_type,
+                    level=expected_level,
+                    parent_id=parent_id
+                )
+                nodes.append(node_result)
+                print(f"  ⚠️ Added {expected_type} (no DB): {display_name[:40]}")
+        except Exception as e:
+            print(f"  ❌ Error adding {expected_type} '{str(raw_name)[:30]}...': {e}")
 
     async def query(
         self, 
@@ -523,9 +555,210 @@ JSON only, không text khác."""
         print(f"\n✅ [SkillTree] Returning {len(tree_nodes)} tree nodes")
         return tree_nodes
 
+    async def find_alternatives(self, current_level: int, query_context: str, node_name: str = "", existing_node_ids: List[str] = None) -> List[dict]:
+        """
+        Find alternative nodes for a given node based on context and level.
+        Search ChromaDB using query_context, filter by node type corresponding to level.
+        Excludes nodes that are already in the tree (existing_node_ids).
+        """
+        search_query = query_context
+        if node_name:
+            search_query = f"{query_context} related to {node_name}"
+            
+        print(f"🔄 Finding alternatives for level {current_level} with query: '{search_query}'")
+        
+        # Determine strict type based on level
+        target_type = "skill"
+        if current_level == 1: 
+            target_type = "ability"
+        elif current_level == 2: 
+            target_type = "skill"
+        elif current_level >= 3: 
+            target_type = "knowledge"
+        
+        # Search ChromaDB with MORE results to increase chance of finding matching type
+        candidates = self.chroma_util.search_with_metadata(
+            [search_query], 
+            n_results_per_query=50, 
+            max_total=50,
+            metadata_filter={"node_type": target_type}  # Use metadata filter for efficiency!
+        )
+        print(f"📊 ChromaDB returned {len(candidates)} candidates for query '{search_query}' (level={current_level}, target_type='{target_type}')")
+        
+        alternatives = []
+        seen_names = set()
+        existing_ids_set = set(existing_node_ids or [])
+        
+        if node_name:
+            seen_names.add(node_name) # Don't suggest itself
+        
+        for idx, c in enumerate(candidates):
+            meta = c.get("metadata", {})
+            c_type = meta.get("node_type", "").lower() 
+            c_id = c.get("id")
+            c_name = meta.get("name", "")
+            
+            # Skip if already in tree
+            if c_id in existing_ids_set:
+                continue
+                
+            # Skip if duplicate name in results
+            if c_name in seen_names:
+                continue
+
+            # Double check type (though filter should handle it)
+            if c_type == target_type:
+                # Calculate similarity score (1 - distance)
+                # ChromaDB distance is usually cosine distance [0, 2] or Euclidean
+                # Assuming cosine distance for SentenceTransformers
+                dist = c.get("distance", 0.5)
+                sim_score = max(0, min(1, 1 - dist))
+                
+                # Filter by threshold
+                from config.settings import settings
+                if sim_score < settings.SKILL_MATCH_THRESHOLD:
+                    continue
+                
+                # Create node object
+                alt_node = {
+                    "id": c_id,
+                    "name": c_name,
+                    "description": meta.get("description", ""),
+                    "type": c_type,
+                    "level": current_level,
+                    "similarity_score": sim_score,
+                    "metadata": {
+                        "difficultyLevel": meta.get("difficulty", "beginner")
+                    }
+                }
+                
+                # Auto-populate children for preview
+                # This avoids N+1 requests from frontend
+                print(f"  generating children for alternative: {c_name}")
+                alt_node["children"] = await self.generate_descendants(alt_node)
+                
+                alternatives.append(alt_node)
+                seen_names.add(c_name)
+                
+            if len(alternatives) >= 5:  # Limit to 5 alternatives
+                break
+                
+        print(f"✅ Found {len(alternatives)} alternatives (with children populated)")
+        return alternatives
+
+
+    async def generate_descendants(self, parent_node: dict) -> List[dict]:
+        """
+        Generate descendant nodes for a newly swapped parent node.
+        Optimized to use BATCH SEARCH for sub-levels.
+        """
+        parent_level = parent_node.get("level", 3)
+        parent_name = parent_node.get("name", "")
+        parent_id = parent_node.get("id")
+        
+        descendants = []
+        
+        # Determine strict type based on level
+        if parent_level == 1: # Ability -> Find Skills (Level 2)
+            search_query = f"Skills for {parent_name}"
+            print(f"  🔄 Generating skills for ability: '{parent_name}'")
+            
+            skills = self.chroma_util.search_with_metadata(
+                [search_query], n_results_per_query=5, max_total=5, metadata_filter={"node_type": "skill"}
+            )
+            
+            # Select 2 distinct skills
+            selected_skills = []
+            seen = set()
+            for s in skills:
+                name = s.get("metadata", {}).get("name", "")
+                if name and name not in seen:
+                    seen.add(name)
+                    # Convert to TreeNode format
+                    skill_node = {
+                        "id": s.get("id"),
+                        "name": name,
+                        "description": s.get("metadata", {}).get("description", ""),
+                        "type": "skill",
+                        "level": 2,
+                        "parentId": parent_id,
+                        "filled": True,
+                        "metadata": s.get("metadata", {})
+                    }
+                    selected_skills.append(skill_node)
+                    descendants.append(skill_node)
+                    if len(selected_skills) >= 2: break
+            
+            # BATCH Generated Knowledge for all selected skills
+            if selected_skills:
+                print(f"  ⚡ Batch generating knowledge for {len(selected_skills)} skills...")
+                knowledge_queries = [f"Knowledge for {skill['name']}" for skill in selected_skills]
+                
+                batch_results = self.chroma_util.batch_search(
+                    knowledge_queries, 
+                    n_results_per_query=5, 
+                    metadata_filter={"node_type": "knowledge"}
+                )
+                
+                # Process results for each skill
+                for i, skill in enumerate(selected_skills):
+                    knowledges = batch_results[i]
+                    seen_k = set()
+                    count_k = 0
+                    
+                    for k in knowledges:
+                        k_name = k.get("metadata", {}).get("name", "")
+                        if k_name and k_name not in seen_k:
+                            seen_k.add(k_name)
+                            k_node = {
+                                "id": k.get("id"),
+                                "name": k_name,
+                                "description": k.get("metadata", {}).get("description", ""),
+                                "type": "knowledge",
+                                "level": 3,
+                                "parentId": skill["id"], # Parent is the Skill
+                                "filled": True,
+                                "metadata": k.get("metadata", {})
+                            }
+                            descendants.append(k_node)
+                            count_k += 1
+                            if count_k >= 2: break
+
+        elif parent_level == 2: # Skill -> Find Knowledge (Level 3)
+            # Find Knowledge for single skill (still use search, no batch needed for 1)
+            search_query = f"Knowledge for {parent_name}"
+            print(f"  🔄 Generating knowledge for skill: '{parent_name}'")
+            
+            knowledges = self.chroma_util.search_with_metadata(
+                [search_query], n_results_per_query=5, max_total=5, metadata_filter={"node_type": "knowledge"}
+            )
+            
+            seen = set()
+            count = 0
+            for k in knowledges:
+                name = k.get("metadata", {}).get("name", "")
+                if name and name not in seen:
+                    seen.add(name)
+                    k_node = {
+                        "id": k.get("id"),
+                        "name": name,
+                        "description": k.get("metadata", {}).get("description", ""),
+                        "type": "knowledge",
+                        "level": 3,
+                        "parentId": parent_id,
+                        "filled": True,
+                        "metadata": k.get("metadata", {})
+                    }
+                    descendants.append(k_node)
+                    count += 1
+                    if count >= 2: break
+                    
+        return descendants
+
 
 # Singleton instance
 _skill_tree_service: Optional[SkillTreeQueryService] = None
+
 
 def get_skill_tree_query_service() -> SkillTreeQueryService:
     """Get or create singleton SkillTreeQueryService"""
