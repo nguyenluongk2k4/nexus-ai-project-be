@@ -18,6 +18,8 @@ from modules.forum.api.router import router as forum_router
 from modules.profile.api.routes import router as profile_router
 # Purchase Router
 from modules.purchase.api.routes import router as purchase_router
+# Subscription Router
+from modules.subscription.api.routes import router as subscription_router
 # Shared database
 from shared.database.connection import init_db
 from shared.logger import configure_logging, get_logger
@@ -129,6 +131,7 @@ app.include_router(skill_tree_router, prefix="/api")
 app.include_router(forum_router)  # Already has /api/forum prefix
 app.include_router(profile_router, prefix="/api")
 app.include_router(purchase_router, prefix="/api")
+app.include_router(subscription_router, prefix="/api")
 
 
 # ============================================================

@@ -31,7 +31,10 @@ class ProfileResponse(BaseModel):
     updated_at: Optional[datetime]
     last_login_at: Optional[datetime]
     is_active: bool
-    balance: float = 0.0  # TODO: Add balance field to users table
+    balance: float = 0.0
+    subscription_tier: str = "free"
+    subscription_tier_name: str = "Free"
+    subscription_expires_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -71,12 +74,26 @@ async def get_profile(
     session: AsyncSession = Depends(get_db)
 ):
     """Get current user's profile information"""
-    # Query actual balance from database
-    balance_result = await session.execute(
-        text("SELECT COALESCE(balance, 0) FROM users WHERE id = :user_id"),
+    # Query balance and subscription from database
+    result = await session.execute(
+        text("""
+            SELECT 
+                COALESCE(u.balance, 0) as balance,
+                COALESCE(u.subscription_tier, 'free') as tier,
+                u.subscription_expires_at,
+                COALESCE(sp.name, 'Free') as tier_name
+            FROM users u
+            LEFT JOIN subscription_plans sp ON u.subscription_tier = sp.id
+            WHERE u.id = :user_id
+        """),
         {"user_id": str(user.id)}
     )
-    balance = float(balance_result.scalar() or 0)
+    row = result.fetchone()
+    
+    balance = float(row.balance) if row else 0
+    tier = row.tier if row else "free"
+    tier_name = row.tier_name if row else "Free"
+    expires_at = row.subscription_expires_at if row else None
     
     return ProfileResponse(
         id=str(user.id),
@@ -88,7 +105,10 @@ async def get_profile(
         updated_at=user.updated_at,
         last_login_at=user.last_login_at,
         is_active=user.is_active,
-        balance=balance
+        balance=balance,
+        subscription_tier=tier,
+        subscription_tier_name=tier_name,
+        subscription_expires_at=expires_at
     )
 
 
