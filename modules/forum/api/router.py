@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.connection import get_db
 from modules.forum.infrastructure.repository import ForumRepositoryImpl
+from modules.auth.api.deps import get_current_user_id_optional
 
 
 router = APIRouter(prefix="/api/forum", tags=["forum"])
@@ -65,6 +66,7 @@ class PostResponse(BaseModel):
     updatedAt: Optional[str] = None
     isPinned: bool = False
     isHot: bool = False
+    isLiked: bool = False  # Whether current user has liked this post
     
     class Config:
         from_attributes = True
@@ -124,7 +126,7 @@ def get_category_style(slug: str) -> dict:
 # Helper Functions
 # =====================================================
 
-def post_to_response(post) -> PostResponse:
+def post_to_response(post, is_liked: bool = False) -> PostResponse:
     """Convert domain post to response"""
     style = get_category_style(post.category_slug or "")
     
@@ -156,7 +158,8 @@ def post_to_response(post) -> PostResponse:
         createdAt=post.created_at.isoformat() if post.created_at else "",
         updatedAt=post.updated_at.isoformat() if post.updated_at else None,
         isPinned=post.is_pinned,
-        isHot=is_hot
+        isHot=is_hot,
+        isLiked=is_liked
     )
 
 
@@ -249,7 +252,8 @@ async def get_latest_posts(
 @router.get("/posts/{post_id}", response_model=ThreadDetailsResponse)
 async def get_thread_details(
     post_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[UUID] = Depends(get_current_user_id_optional)
 ):
     """Get post details with comments"""
     repo = ForumRepositoryImpl(db)
@@ -265,8 +269,13 @@ async def get_thread_details(
     
     comments = await repo.get_comments_by_post(post_uuid)
     
+    # Check if current user has liked the post
+    is_liked = False
+    if user_id:
+        is_liked = await repo.has_user_liked_post(user_id, post_uuid)
+    
     return ThreadDetailsResponse(
-        post=post_to_response(post),
+        post=post_to_response(post, is_liked=is_liked),
         comments=[
             CommentResponse(
                 id=str(c.id),

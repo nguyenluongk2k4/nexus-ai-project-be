@@ -91,6 +91,28 @@ class UserRepositoryImpl(AuthRepositoryPort):
                 model.last_login_at = datetime.now()
                 await db.commit()
     
+    async def update(self, user: User) -> User:
+        """Update user profile"""
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(UserModel).where(UserModel.id == user.id)
+            )
+            model = result.scalar_one_or_none()
+            
+            if not model:
+                raise ValueError("User not found")
+            
+            # Update fields
+            model.full_name = user.full_name
+            model.email = user.email
+            model.avatar_url = user.avatar_url
+            model.updated_at = datetime.now()
+            
+            await db.commit()
+            await db.refresh(model)
+            
+            return self._to_entity(model)
+    
     def _to_entity(self, model: UserModel) -> User:
         """Convert model to entity"""
         return User(

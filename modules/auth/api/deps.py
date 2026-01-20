@@ -41,3 +41,24 @@ async def get_current_user(user_id: UUID = Depends(get_current_user_id)) -> User
         )
     
     return user
+
+
+# Optional auth - returns None if not authenticated
+security_optional = HTTPBearer(auto_error=False)
+
+async def get_current_user_id_optional(
+    credentials: HTTPAuthorizationCredentials = Depends(security_optional)
+) -> UUID | None:
+    """Extract user ID from JWT token, returns None if not authenticated"""
+    if not credentials:
+        return None
+    
+    jwt_service = get_jwt_service()
+    token = credentials.credentials
+    user_id = jwt_service.get_user_id_from_token(token)
+    
+    if not user_id:
+        return None
+    
+    return UUID(user_id)
+
