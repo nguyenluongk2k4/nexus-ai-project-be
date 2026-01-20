@@ -37,9 +37,36 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                 id=_to_uuid(model.id),
                 user_id=_to_uuid(model.user_id) if model.user_id else None,
                 title=model.title,
+                context_data=model.context_data,
                 created_at=model.created_at,
                 updated_at=model.updated_at
             )
+    
+    async def update_session_context(self, session_id: UUID, context_data: dict) -> bool:
+        """Update session context data (e.g. skill tree)"""
+        async with async_session_maker() as db:
+            from sqlalchemy import update
+            stmt = (
+                update(ChatSessionModel)
+                .where(ChatSessionModel.id == session_id)
+                .values(context_data=context_data)
+            )
+            result = await db.execute(stmt)
+            await db.commit()
+            return result.rowcount > 0
+    
+    async def update_session_context(self, session_id: UUID, context_data: dict) -> bool:
+        """Update session context data (e.g. skill tree)"""
+        async with async_session_maker() as db:
+            from sqlalchemy import update
+            stmt = (
+                update(ChatSessionModel)
+                .where(ChatSessionModel.id == session_id)
+                .values(context_data=context_data)
+            )
+            result = await db.execute(stmt)
+            await db.commit()
+            return result.rowcount > 0
     
     async def get_user_sessions(self, user_id: UUID) -> List[ChatSession]:
         """Get all sessions for a user"""
@@ -56,6 +83,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                     id=_to_uuid(m.id),
                     user_id=_to_uuid(m.user_id) if m.user_id else None,
                     title=m.title,
+                    context_data=m.context_data,
                     created_at=m.created_at,
                     updated_at=m.updated_at
                 )
@@ -129,14 +157,16 @@ class ChatRepositoryImpl(ChatRepositoryPort):
             
             return messages
     
-    async def get_recent_sessions(self, limit: int = 5, offset: int = 0) -> List[ChatSession]:
+    async def get_recent_sessions(self, limit: int = 5, offset: int = 0, user_id: UUID = None) -> List[ChatSession]:
         """Get recent sessions with pagination for load more"""
         async with async_session_maker() as db:
+            stmt = select(ChatSessionModel).order_by(ChatSessionModel.updated_at.desc())
+            
+            if user_id:
+                stmt = stmt.where(ChatSessionModel.user_id == user_id)
+            
             result = await db.execute(
-                select(ChatSessionModel)
-                .order_by(ChatSessionModel.updated_at.desc())
-                .offset(offset)
-                .limit(limit)
+                stmt.offset(offset).limit(limit)
             )
             models = result.scalars().all()
             
@@ -145,6 +175,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                     id=_to_uuid(m.id),
                     user_id=_to_uuid(m.user_id) if m.user_id else None,
                     title=m.title,
+                    context_data=m.context_data,
                     created_at=m.created_at,
                     updated_at=m.updated_at
                 )

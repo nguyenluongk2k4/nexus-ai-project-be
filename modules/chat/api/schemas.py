@@ -23,6 +23,7 @@ class ChatSessionResponse(BaseModel):
     """Response for chat session info"""
     id: str
     title: Optional[str] = None
+    context_data: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 

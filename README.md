@@ -145,3 +145,8 @@ docker build -t nexusai-backend .
 | Vector DB | ChromaDB |
 | LLM | Google Gemini |
 | Embeddings | SentenceTransformer (multilingual) |
+
+
+chroma run --host localhost --port 8001 --path ../chroma_db         
+
+python scripts/sync_chroma_db.py

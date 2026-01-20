@@ -1,4 +1,4 @@
-# Auth Module - API Routes
+  # Auth Module - API Routes
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -9,11 +9,11 @@ from modules.auth.api.schemas import (
 )
 from modules.auth.providers import get_user_repository, get_jwt_service, get_password_service
 from modules.auth.domain.entities import User
+from modules.auth.api.deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Security scheme
-security = HTTPBearer()
+
 
 
 # ============================================================
@@ -143,31 +143,8 @@ async def login(data: LoginRequest):
     response_model=UserResponse,
     summary="Lấy thông tin user hiện tại"
 )
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_me(user: User = Depends(get_current_user)):
     """Get current authenticated user info"""
-    jwt_service = get_jwt_service()
-    user_repo = get_user_repository()
-    
-    # Decode token
-    token = credentials.credentials
-    user_id = jwt_service.get_user_id_from_token(token)
-    
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
-    
-    # Get user
-    from uuid import UUID
-    user = await user_repo.get_by_id(UUID(user_id))
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
     return UserResponse(
         id=str(user.id),
         email=user.email,

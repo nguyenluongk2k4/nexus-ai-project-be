@@ -10,6 +10,7 @@ from uuid import UUID
 from modules.chat.api.schemas import ChatMessageRequest, ChatMessageResponse, ChatSessionResponse
 from modules.chat.providers import get_chatbot_service
 from modules.auth.providers import get_jwt_service, get_user_repository
+from modules.auth.api.deps import get_current_user_id
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -21,20 +22,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 security = HTTPBearer()
 
 
-async def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UUID:
-    """Dependency to get current authenticated user ID from JWT token"""
-    jwt_service = get_jwt_service()
-    
-    token = credentials.credentials
-    user_id = jwt_service.get_user_id_from_token(token)
-    
-    if not user_id:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token"
-        )
-    
-    return UUID(user_id)
+
 
 
 # ============================================================
@@ -92,12 +80,13 @@ async def list_sessions(limit: int = 5, offset: int = 0, user_id: UUID = Depends
     from modules.chat.infrastructure.repository import ChatRepositoryImpl
     
     repo = ChatRepositoryImpl()
-    sessions = await repo.get_recent_sessions(limit=limit, offset=offset)
+    sessions = await repo.get_recent_sessions(limit=limit, offset=offset, user_id=user_id)
     
     return [
         ChatSessionResponse(
             id=str(s.id),
             title=s.title,
+            context_data=s.context_data,
             created_at=s.created_at,
             updated_at=s.updated_at
         )
@@ -155,124 +144,183 @@ async def delete_session(session_id: str, user_id: UUID = Depends(get_current_us
 @router.websocket("/ws")
 async def websocket_chat(websocket: WebSocket):
     """
-    WebSocket endpoint cho real-time chat.
-    
-    Protocol:
-    - Client gửi: {"type": "user_message", "text": "...", "session_id": "..."}
-    - Server trả: {"type": "bot_message", "text": "...", "session_id": "..."}
+    WebSocket endpoint for real-time chat with support for:
+    - User authentication (via token)
+    - Session management
+    - Skill Tree generation and persistence
+    - Robust error handling
     """
     await websocket.accept()
     
     # Get ChatbotService
-    chatbot = get_chatbot_service()
+    try:
+        chatbot = get_chatbot_service()
+    except Exception as e:
+        logger.error(f"❌ [WS] Failed to get ChatbotService: {e}")
+        await websocket.close(code=1011)
+        return
     
     try:
         while True:
-            raw_msg = await websocket.receive_text()
-            
             try:
-                data = json.loads(raw_msg)
-            except:
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "error": "invalid_json",
-                    "message": "Message must be valid JSON"
-                }))
-                continue
-            
-            msg_type = data.get("type")
-            session_id = data.get("session_id")
-            
-            # Handle ping
-            if msg_type == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-                continue
-            
-            # Handle new session
-            if msg_type == "new_session":
-                from uuid import uuid4
-                session_id = str(uuid4())
-                await websocket.send_text(json.dumps({
-                    "type": "session_started",
-                    "session_id": session_id
-                }))
-                continue
-            
-            # Handle user message
-            if msg_type == "user_message":
-                text = (data.get("text") or "").strip()
+                raw_msg = await websocket.receive_text()
                 
-                if not text:
+                try:
+                    data = json.loads(raw_msg)
+                except:
                     await websocket.send_text(json.dumps({
                         "type": "error",
-                        "error": "empty_text",
-                        "message": "Text cannot be empty"
+                        "error": "invalid_json",
+                        "message": "Message must be valid JSON"
                     }))
                     continue
                 
-                from uuid import uuid4, UUID
-                from modules.chat.domain.entities import ChatSession
+                msg_type = data.get("type")
+                session_id = data.get("session_id")
                 
-                # Create or verify session exists
-                if not session_id:
-                    # No session ID - create new session
+                # Handle ping
+                if msg_type == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                    continue
+                
+                # Handle new session
+                if msg_type == "new_session":
+                    from uuid import uuid4
                     session_id = str(uuid4())
-                    new_session = ChatSession(id=UUID(session_id), title=text[:50])
-                    await chatbot.chat_repo.create_session(new_session)
-                    
                     await websocket.send_text(json.dumps({
                         "type": "session_started",
                         "session_id": session_id
                     }))
-                else:
-                    # Session ID provided - check if exists in DB
-                    existing_session = await chatbot.chat_repo.get_session(UUID(session_id))
-                    if not existing_session:
-                        # Session doesn't exist - create it
-                        new_session = ChatSession(id=UUID(session_id), title=text[:50])
+                    continue
+                
+                # Handle user message
+                if msg_type == "user_message":
+                    text = (data.get("text") or "").strip()
+                    
+                    if not text:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "error": "empty_text",
+                            "message": "Text cannot be empty"
+                        }))
+                        continue
+                    
+                    from uuid import uuid4, UUID
+                    from modules.chat.domain.entities import ChatSession
+                    
+                    # 1. User Identification
+                    token = data.get("token")
+                    user_id = None
+                    if token:
+                        try:
+                            from modules.auth.providers import get_jwt_service
+                            jwt_service = get_jwt_service()
+                            uid_str = jwt_service.get_user_id_from_token(token)
+                            if uid_str:
+                                user_id = UUID(uid_str)
+                        except Exception as e:
+                            logger.warning(f"⚠️ [WS] Invalid token: {e}")
+
+                    # 2. Session Management
+                    if not session_id:
+                        session_id = str(uuid4())
+                        new_session = ChatSession(
+                            id=UUID(session_id), 
+                            title=text[:50],
+                            user_id=user_id
+                        )
                         await chatbot.chat_repo.create_session(new_session)
-                        logger.info(f"Created missing session: {session_id}")
-                
-                # Send thinking status
+                        
+                        await websocket.send_text(json.dumps({
+                            "type": "session_started",
+                            "session_id": session_id
+                        }))
+                    else:
+                        existing_session = await chatbot.chat_repo.get_session(UUID(session_id))
+                        if not existing_session:
+                            new_session = ChatSession(
+                                id=UUID(session_id), 
+                                title=text[:50],
+                                user_id=user_id
+                            )
+                            await chatbot.chat_repo.create_session(new_session)
+                            logger.info(f"✨ [WS] Created missing session: {session_id}")
+                    
+                    # 3. Status Update
+                    await websocket.send_text(json.dumps({
+                        "type": "status",
+                        "status": "thinking",
+                        "session_id": session_id
+                    }))
+                    
+                    try:
+                        # 4. Chat Processing
+                        response = await chatbot.respond(UUID(session_id), text)
+                        logger.info(f"✅ [WS] Processed message for {session_id}")
+                        
+                        await websocket.send_text(json.dumps({
+                            "type": "bot_message",
+                            "text": response,
+                            "session_id": session_id
+                        }))
+                        
+                        # 5. Skill Tree Signal - Let frontend call HTTP API to generate tree
+                        # Only send signal that tree generation is possible, frontend will call HTTP
+                        try:
+                            from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
+                            skill_tree_service = get_skill_tree_query_service()
+                            
+                            # Quick check if this is a skill tree related query
+                            is_tree_query = await skill_tree_service.is_skill_tree_query(text)
+                            
+                            if is_tree_query:
+                                logger.info(f"🎯 [WS] Detected skill tree query, signaling frontend...")
+                                
+                                # Send signal to frontend to call HTTP streaming endpoint
+                                await websocket.send_text(json.dumps({
+                                    "type": "tree_generating",
+                                    "session_id": session_id,
+                                    "message": text  # Pass the message for HTTP call
+                                }))
+                                    
+                        except Exception as tree_err:
+                            logger.error(f"⚠️ [WS] Tree check error (non-fatal): {tree_err}")
+
+                        
+                    except Exception as inference_err:
+                        logger.error(f"❌ [WS] Inference Error: {inference_err}")
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "error": "inference_failed",
+                            "message": str(inference_err),
+                            "session_id": session_id
+                        }))
+                    
+                    # 6. Status Update (Idle)
+                    await websocket.send_text(json.dumps({
+                        "type": "status",
+                        "status": "idle",
+                        "session_id": session_id
+                    }))
+                    continue
+
+                # Unknown type
                 await websocket.send_text(json.dumps({
-                    "type": "status",
-                    "status": "thinking",
-                    "session_id": session_id
+                    "type": "error",
+                    "error": "unknown_type",
+                    "message": f"Unknown message type: {msg_type}"
                 }))
-                
-                try:
-                    response = await chatbot.respond(UUID(session_id), text)
-                    logger.info(f"✅ WS: Processed message for session: {session_id}")
-                    
-                    await websocket.send_text(json.dumps({
-                        "type": "bot_message",
-                        "text": response,
-                        "session_id": session_id
-                    }))
-                    
-                except Exception as e:
-                    logger.error(f"❌ WS ChatbotService error: {e}")
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "error": "inference_failed",
-                        "message": str(e),
-                        "session_id": session_id
-                    }))
-                
-                # Send idle status
+
+            except Exception as loop_err:
+                logger.error(f"❌ [WS] Loop Error: {loop_err}", exc_info=True)
                 await websocket.send_text(json.dumps({
-                    "type": "status",
-                    "status": "idle",
-                    "session_id": session_id
+                    "type": "error",
+                    "error": "internal_error",
+                    "message": "Server internal error"
                 }))
                 continue
-            
-            # Unknown message type
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "error": "unknown_type",
-                "message": f"Unknown message type: {msg_type}"
-            }))
     
     except WebSocketDisconnect:
-        pass
+        logger.info("[WS] Client disconnected")
+    except Exception as fatal_err:
+        logger.critical(f"❌ [WS] Fatal Connection Error: {fatal_err}", exc_info=True)
