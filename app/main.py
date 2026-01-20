@@ -12,6 +12,8 @@ from modules.admin.api.routes import router as admin_router
 from modules.auth.api.routes import router as auth_router
 # Skill Tree Router
 from modules.skill_tree.api.routes import router as skill_tree_router
+# Forum Router
+from modules.forum.api.router import router as forum_router
 # Shared database
 from shared.database.connection import init_db
 from shared.logger import configure_logging, get_logger
@@ -118,6 +120,7 @@ app.include_router(admin_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 
 app.include_router(skill_tree_router, prefix="/api")
+app.include_router(forum_router)  # Already has /api/forum prefix
 
 
 # ============================================================
