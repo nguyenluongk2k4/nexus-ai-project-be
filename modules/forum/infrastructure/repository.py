@@ -105,59 +105,188 @@ class ForumRepositoryImpl(ForumRepositoryPort):
         )
     
     async def get_latest_posts(self, limit: int = 10) -> List[ForumPost]:
-        """Get latest posts across all categories"""
+        """Get latest posts across all categories - OPTIMIZED with JOINs"""
+        # Single query with JOINs for author & category, subqueries for counts
+        comment_count_subq = (
+            select(func.count(ForumCommentModel.id))
+            .where(ForumCommentModel.post_id == ForumPostModel.id)
+            .correlate(ForumPostModel)
+            .scalar_subquery()
+        )
+        
+        like_count_subq = (
+            select(func.count(PostLikeModel.user_id))
+            .where(PostLikeModel.post_id == ForumPostModel.id)
+            .correlate(ForumPostModel)
+            .scalar_subquery()
+        )
+        
         stmt = (
-            select(ForumPostModel)
+            select(
+                ForumPostModel,
+                UserModel,
+                ForumCategoryModel,
+                comment_count_subq.label('comment_count'),
+                like_count_subq.label('like_count')
+            )
+            .outerjoin(UserModel, ForumPostModel.user_id == UserModel.id)
+            .outerjoin(ForumCategoryModel, ForumPostModel.category_id == ForumCategoryModel.id)
             .order_by(ForumPostModel.created_at.desc())
             .limit(limit)
         )
-        result = await self.session.execute(stmt)
-        posts = result.scalars().all()
         
-        return await self._enrich_posts(posts)
+        result = await self.session.execute(stmt)
+        rows = result.tuples().all()
+        
+        posts = []
+        for row in rows:
+            post, user, category, comment_count, like_count = row[0], row[1], row[2], row[3], row[4]
+            
+            author = self._user_model_to_entity(user) if user else self._user_model_to_entity(None)
+            
+            posts.append(ForumPost(
+                id=post.id,
+                category_id=post.category_id,
+                user_id=post.user_id,
+                title=post.title,
+                content=post.content,
+                view_count=post.view_count,
+                is_pinned=post.is_pinned,
+                is_locked=post.is_locked,
+                created_at=post.created_at,
+                updated_at=post.updated_at,
+                author=author,
+                category_name=category.name if category else None,
+                category_slug=category.slug if category else None,
+                comment_count=comment_count or 0,
+                like_count=like_count or 0
+            ))
+        
+        return posts
     
     async def get_posts_by_category(self, category_id: UUID) -> List[ForumPost]:
-        """Get posts in a specific category"""
+        """Get posts in a specific category - OPTIMIZED with JOINs"""
+        comment_count_subq = (
+            select(func.count(ForumCommentModel.id))
+            .where(ForumCommentModel.post_id == ForumPostModel.id)
+            .correlate(ForumPostModel)
+            .scalar_subquery()
+        )
+        
+        like_count_subq = (
+            select(func.count(PostLikeModel.user_id))
+            .where(PostLikeModel.post_id == ForumPostModel.id)
+            .correlate(ForumPostModel)
+            .scalar_subquery()
+        )
+        
         stmt = (
-            select(ForumPostModel)
+            select(
+                ForumPostModel,
+                UserModel,
+                ForumCategoryModel,
+                comment_count_subq.label('comment_count'),
+                like_count_subq.label('like_count')
+            )
+            .outerjoin(UserModel, ForumPostModel.user_id == UserModel.id)
+            .outerjoin(ForumCategoryModel, ForumPostModel.category_id == ForumCategoryModel.id)
             .where(ForumPostModel.category_id == category_id)
             .order_by(ForumPostModel.is_pinned.desc(), ForumPostModel.created_at.desc())
         )
-        result = await self.session.execute(stmt)
-        posts = result.scalars().all()
         
-        return await self._enrich_posts(posts)
+        result = await self.session.execute(stmt)
+        rows = result.tuples().all()
+        
+        posts = []
+        for row in rows:
+            post, user, category, comment_count, like_count = row[0], row[1], row[2], row[3], row[4]
+            
+            author = self._user_model_to_entity(user) if user else self._user_model_to_entity(None)
+            
+            posts.append(ForumPost(
+                id=post.id,
+                category_id=post.category_id,
+                user_id=post.user_id,
+                title=post.title,
+                content=post.content,
+                view_count=post.view_count,
+                is_pinned=post.is_pinned,
+                is_locked=post.is_locked,
+                created_at=post.created_at,
+                updated_at=post.updated_at,
+                author=author,
+                category_name=category.name if category else None,
+                category_slug=category.slug if category else None,
+                comment_count=comment_count or 0,
+                like_count=like_count or 0
+            ))
+        
+        return posts
     
     async def _enrich_posts(self, posts: List[ForumPostModel]) -> List[ForumPost]:
-        """Add author, category, and counts to posts"""
+        """Add author, category, and counts to posts - OPTIMIZED with batch loading"""
+        if not posts:
+            return []
+        
+        # Collect all IDs needed
+        post_ids = [p.id for p in posts]
+        user_ids = [p.user_id for p in posts if p.user_id]
+        category_ids = list(set(p.category_id for p in posts if p.category_id))
+        
+        # Batch load all users in one query
+        users_map = {}
+        if user_ids:
+            user_stmt = select(UserModel).where(UserModel.id.in_(user_ids))
+            user_result = await self.session.execute(user_stmt)
+            for user in user_result.scalars().all():
+                users_map[user.id] = self._user_model_to_entity(user)
+        
+        # Batch load all categories in one query
+        categories_map = {}
+        if category_ids:
+            cat_stmt = select(ForumCategoryModel).where(ForumCategoryModel.id.in_(category_ids))
+            cat_result = await self.session.execute(cat_stmt)
+            for cat in cat_result.scalars().all():
+                categories_map[cat.id] = {"name": cat.name, "slug": cat.slug}
+        
+        # Batch load comment counts in one query
+        comment_counts_map = {}
+        comment_stmt = (
+            select(ForumCommentModel.post_id, func.count(ForumCommentModel.id))
+            .where(ForumCommentModel.post_id.in_(post_ids))
+            .group_by(ForumCommentModel.post_id)
+        )
+        comment_result = await self.session.execute(comment_stmt)
+        for post_id, count in comment_result.all():
+            comment_counts_map[post_id] = count
+        
+        # Batch load like counts in one query
+        like_counts_map = {}
+        like_stmt = (
+            select(PostLikeModel.post_id, func.count(PostLikeModel.user_id))
+            .where(PostLikeModel.post_id.in_(post_ids))
+            .group_by(PostLikeModel.post_id)
+        )
+        like_result = await self.session.execute(like_stmt)
+        for post_id, count in like_result.all():
+            like_counts_map[post_id] = count
+        
+        # Build enriched posts from cached data
         enriched = []
         for post in posts:
-            # Get author
-            author = None
-            if post.user_id:
-                user_stmt = select(UserModel).where(UserModel.id == post.user_id)
-                user_result = await self.session.execute(user_stmt)
-                user = user_result.scalar_one_or_none()
-                author = self._user_model_to_entity(user)
-            else:
+            # Get author from cache
+            author = users_map.get(post.user_id) if post.user_id else None
+            if not author:
                 author = self._user_model_to_entity(None)
             
-            # Get category
-            cat_name = None
-            cat_slug = None
-            if post.category_id:
-                cat_stmt = select(ForumCategoryModel).where(
-                    ForumCategoryModel.id == post.category_id
-                )
-                cat_result = await self.session.execute(cat_stmt)
-                cat = cat_result.scalar_one_or_none()
-                if cat:
-                    cat_name = cat.name
-                    cat_slug = cat.slug
+            # Get category from cache
+            cat_data = categories_map.get(post.category_id) if post.category_id else None
+            cat_name = cat_data["name"] if cat_data else None
+            cat_slug = cat_data["slug"] if cat_data else None
             
-            # Get counts
-            comment_count = await self._get_comment_count(post.id)
-            like_count = await self.get_like_count(post.id)
+            # Get counts from cache
+            comment_count = comment_counts_map.get(post.id, 0)
+            like_count = like_counts_map.get(post.id, 0)
             
             enriched.append(ForumPost(
                 id=post.id,
@@ -188,38 +317,77 @@ class ForumRepositoryImpl(ForumRepositoryPort):
         return result.scalar() or 0
     
     async def get_post_by_id(self, post_id: UUID) -> Optional[ForumPost]:
-        """Get post by ID with author info"""
-        stmt = select(ForumPostModel).where(ForumPostModel.id == post_id)
-        result = await self.session.execute(stmt)
-        post = result.scalar_one_or_none()
+        """Get post by ID with author info - OPTIMIZED with JOINs"""
+        comment_count_subq = (
+            select(func.count(ForumCommentModel.id))
+            .where(ForumCommentModel.post_id == ForumPostModel.id)
+            .correlate(ForumPostModel)
+            .scalar_subquery()
+        )
         
-        if not post:
+        like_count_subq = (
+            select(func.count(PostLikeModel.user_id))
+            .where(PostLikeModel.post_id == ForumPostModel.id)
+            .correlate(ForumPostModel)
+            .scalar_subquery()
+        )
+        
+        stmt = (
+            select(
+                ForumPostModel,
+                UserModel,
+                ForumCategoryModel,
+                comment_count_subq.label('comment_count'),
+                like_count_subq.label('like_count')
+            )
+            .outerjoin(UserModel, ForumPostModel.user_id == UserModel.id)
+            .outerjoin(ForumCategoryModel, ForumPostModel.category_id == ForumCategoryModel.id)
+            .where(ForumPostModel.id == post_id)
+        )
+        
+        result = await self.session.execute(stmt)
+        row = result.tuples().first()
+        
+        if not row:
             return None
         
-        posts = await self._enrich_posts([post])
-        return posts[0] if posts else None
+        post, user, category, comment_count, like_count = row[0], row[1], row[2], row[3], row[4]
+        author = self._user_model_to_entity(user) if user else self._user_model_to_entity(None)
+        
+        return ForumPost(
+            id=post.id,
+            category_id=post.category_id,
+            user_id=post.user_id,
+            title=post.title,
+            content=post.content,
+            view_count=post.view_count,
+            is_pinned=post.is_pinned,
+            is_locked=post.is_locked,
+            created_at=post.created_at,
+            updated_at=post.updated_at,
+            author=author,
+            category_name=category.name if category else None,
+            category_slug=category.slug if category else None,
+            comment_count=comment_count or 0,
+            like_count=like_count or 0
+        )
     
     async def get_comments_by_post(self, post_id: UUID) -> List[ForumComment]:
-        """Get comments for a post (flat list, client can nest)"""
+        """Get comments for a post - OPTIMIZED with JOIN for authors"""
         stmt = (
-            select(ForumCommentModel)
+            select(ForumCommentModel, UserModel)
+            .outerjoin(UserModel, ForumCommentModel.user_id == UserModel.id)
             .where(ForumCommentModel.post_id == post_id)
             .order_by(ForumCommentModel.created_at.asc())
         )
         result = await self.session.execute(stmt)
-        comments = result.scalars().all()
+        rows = result.tuples().all()
         
         comment_list = []
-        for comment in comments:
-            # Get author
-            author = None
-            if comment.user_id:
-                user_stmt = select(UserModel).where(UserModel.id == comment.user_id)
-                user_result = await self.session.execute(user_stmt)
-                user = user_result.scalar_one_or_none()
-                author = self._user_model_to_entity(user)
-            else:
-                author = self._user_model_to_entity(None)
+        for row in rows:
+            comment = row[0]
+            user = row[1] if len(row) > 1 else None
+            author = self._user_model_to_entity(user) if user else self._user_model_to_entity(None)
             
             comment_list.append(ForumComment(
                 id=comment.id,
