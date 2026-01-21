@@ -18,7 +18,7 @@ from modules.skill_tree.infrastructure.models import (
     LearningProgressModel,
     UserSkillTreeModel,
     UserSkillNodeModel,
-    TemplateSkillNodeModel
+    UserSkillPathModel
 )
 
 
@@ -400,6 +400,205 @@ class SkillTreeRepository(SkillTreePort):
             
             return result
 
+    # =============== USER SKILL TREE METHODS ===============
+    
+    async def get_or_create_user_tree(self, user_id: UUID, name: str = "My Learning Path") -> UserSkillTreeModel:
+        """Get existing user tree or create a new one"""
+        async with get_db_context() as session:
+            # Try to find existing tree
+            result = await session.execute(
+                select(UserSkillTreeModel).where(UserSkillTreeModel.user_id == user_id).limit(1)
+            )
+            user_tree = result.scalar_one_or_none()
+            
+            if user_tree:
+                return user_tree
+            
+            # Create new tree
+            new_tree = UserSkillTreeModel(
+                user_id=user_id,
+                name=name
+            )
+            session.add(new_tree)
+            await session.commit()
+            await session.refresh(new_tree)
+            return new_tree
+
+    async def get_full_user_tree(self, user_id: UUID) -> Optional[dict]:
+        """Get user's skill tree with all nodes and edges"""
+        async with get_db_context() as session:
+            # Get user's tree
+            result = await session.execute(
+                select(UserSkillTreeModel).where(UserSkillTreeModel.user_id == user_id).limit(1)
+            )
+            user_tree = result.scalar_one_or_none()
+            
+            if not user_tree:
+                return None
+            
+            # Get all nodes for this tree
+            nodes_result = await session.execute(
+                select(UserSkillNodeModel).where(UserSkillNodeModel.tree_id == user_tree.id)
+            )
+            nodes = nodes_result.scalars().all()
+            
+            if not nodes:
+                return {
+                    "id": str(user_tree.id),
+                    "name": user_tree.name,
+                    "nodes": [],
+                    "edges": []
+                }
+            
+            # Get paths (edges) for hierarchy
+            node_ids = [n.id for n in nodes]
+            paths_result = await session.execute(
+                select(UserSkillPathModel).where(
+                    UserSkillPathModel.depth == 1,
+                    UserSkillPathModel.ancestor_id.in_(node_ids),
+                    UserSkillPathModel.descendant_id.in_(node_ids)
+                )
+            )
+            paths = paths_result.scalars().all()
+            
+            # Build level map from paths (root = no parent)
+            child_ids = set(p.descendant_id for p in paths)
+            parent_map = {p.descendant_id: p.ancestor_id for p in paths}
+            
+            def get_level(node_id, depth=0):
+                if node_id not in parent_map:
+                    return depth
+                return get_level(parent_map[node_id], depth + 1)
+            
+            # Construct response
+            tree_data = {
+                "id": str(user_tree.id),
+                "name": user_tree.name,
+                "nodes": [],
+                "edges": []
+            }
+            
+            for node in nodes:
+                level = get_level(node.id)
+                parent_id = str(parent_map[node.id]) if node.id in parent_map else None
+                
+                tree_data["nodes"].append({
+                    "id": str(node.id),
+                    "name": node.name,
+                    "description": node.description,
+                    "status": node.status,
+                    "progress_percent": node.progress_percent,
+                    "level": level,
+                    "parent_id": parent_id,
+                    "icon": node.icon,
+                    "color": node.color
+                })
+            
+            for path in paths:
+                tree_data["edges"].append({
+                    "source": str(path.ancestor_id),
+                    "target": str(path.descendant_id)
+                })
+            
+            return tree_data
+
+    async def add_nodes_to_user_tree(
+        self, 
+        user_id: UUID, 
+        session_id: str, 
+        node_data: List[dict]
+    ) -> dict:
+        """
+        Add nodes from chat session to user's tree.
+        node_data: List of dicts with id, name, description, level, parentId
+        """
+        async with get_db_context() as session:
+            # Get or create user tree
+            result = await session.execute(
+                select(UserSkillTreeModel).where(UserSkillTreeModel.user_id == user_id).limit(1)
+            )
+            user_tree = result.scalar_one_or_none()
+            
+            if not user_tree:
+                user_tree = UserSkillTreeModel(
+                    user_id=user_id,
+                    name="My Learning Path"
+                )
+                session.add(user_tree)
+                await session.flush()
+            
+            # Track old_id -> new_id mapping for paths
+            id_mapping = {}
+            new_nodes = []
+            
+            for node in node_data:
+                new_node = UserSkillNodeModel(
+                    tree_id=user_tree.id,
+                    name=node.get("name", "Untitled"),
+                    description=node.get("description"),
+                    status="not_started",
+                    progress_percent=0
+                )
+                session.add(new_node)
+                await session.flush()
+                
+                id_mapping[node["id"]] = new_node.id
+                new_nodes.append(new_node)
+            
+            # Create paths (edges) based on parentId
+            for node in node_data:
+                new_node_id = id_mapping[node["id"]]
+                parent_id = node.get("parentId")
+                
+                # Self-reference path (depth=0)
+                self_path = UserSkillPathModel(
+                    ancestor_id=new_node_id,
+                    descendant_id=new_node_id,
+                    depth=0
+                )
+                session.add(self_path)
+                
+                # Parent-child path (depth=1)
+                if parent_id and parent_id in id_mapping:
+                    parent_path = UserSkillPathModel(
+                        ancestor_id=id_mapping[parent_id],
+                        descendant_id=new_node_id,
+                        depth=1
+                    )
+                    session.add(parent_path)
+            
+            await session.commit()
+            
+            return {
+                "status": "success",
+                "tree_id": str(user_tree.id),
+                "nodes_added": len(new_nodes)
+            }
+
+    async def remove_node_from_user_tree(self, user_id: UUID, node_id: str) -> bool:
+        """Remove a node from user's tree (cascades to paths)"""
+        async with get_db_context() as session:
+            uuid_node_id = UUID(node_id)
+            
+            # Verify node belongs to user's tree
+            result = await session.execute(
+                select(UserSkillNodeModel)
+                .join(UserSkillTreeModel)
+                .where(
+                    UserSkillNodeModel.id == uuid_node_id,
+                    UserSkillTreeModel.user_id == user_id
+                )
+            )
+            node = result.scalar_one_or_none()
+            
+            if not node:
+                return False
+            
+            # Delete node (paths will cascade)
+            await session.delete(node)
+            await session.commit()
+            return True
+
 
 
 # Singleton instance
@@ -411,3 +610,4 @@ def get_skill_tree_repository() -> SkillTreeRepository:
     if _repository is None:
         _repository = SkillTreeRepository()
     return _repository
+

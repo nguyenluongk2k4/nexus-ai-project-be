@@ -311,3 +311,87 @@ async def swap_session_node(
         raise HTTPException(status_code=400, detail="Failed to swap node: Node not found or session invalid")
         
     return {"status": "success", "nodes": updated_tree}
+
+
+# =============== MY SKILL TREE ENDPOINTS ===============
+
+class SaveToMyTreeRequest(BaseModel):
+    session_id: str
+    node_ids: List[str]
+
+@router.get("/my-tree")
+async def get_my_tree(
+    user_id: UUID = Depends(get_current_user_id)
+):
+    """
+    Get the user's personal skill tree with all saved nodes.
+    """
+    repo = get_skill_tree_repository()
+    tree_data = await repo.get_full_user_tree(user_id)
+    
+    if tree_data is None:
+        # Return empty tree structure instead of None
+        return {"id": None, "name": "My Learning Path", "nodes": [], "edges": []}
+    
+    return tree_data
+
+
+@router.post("/my-tree/save")
+async def save_to_my_tree(
+    request: SaveToMyTreeRequest,
+    user_id: UUID = Depends(get_current_user_id)
+):
+    """
+    Save nodes from a chat session to user's personal skill tree.
+    """
+    # Get nodes from session context
+    try:
+        from modules.chat.infrastructure.repository import ChatRepositoryImpl
+        chat_repo = ChatRepositoryImpl()
+        session = await chat_repo.get_session(UUID(request.session_id))
+        
+        if not session or not session.context_data:
+            raise HTTPException(status_code=404, detail="Session not found or has no tree data")
+        
+        tree_nodes = session.context_data.get("tree_nodes", [])
+        if not tree_nodes:
+            raise HTTPException(status_code=400, detail="No tree nodes in session")
+        
+        # Filter to requested node_ids (or all if empty)
+        if request.node_ids:
+            node_data = [n for n in tree_nodes if n.get("id") in request.node_ids]
+        else:
+            node_data = tree_nodes
+        
+        if not node_data:
+            raise HTTPException(status_code=400, detail="No matching nodes found")
+        
+        # Save to user's tree
+        repo = get_skill_tree_repository()
+        result = await repo.add_nodes_to_user_tree(user_id, request.session_id, node_data)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"⚠️ Error saving to my tree: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save: {str(e)}")
+
+
+@router.delete("/my-tree/nodes/{node_id}")
+async def remove_from_my_tree(
+    node_id: str,
+    user_id: UUID = Depends(get_current_user_id)
+):
+    """
+    Remove a node from user's personal skill tree.
+    """
+    repo = get_skill_tree_repository()
+    success = await repo.remove_node_from_user_tree(user_id, node_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Node not found or does not belong to user")
+    
+    return {"status": "success", "message": "Node removed"}
+
