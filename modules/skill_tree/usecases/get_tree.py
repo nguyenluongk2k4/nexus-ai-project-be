@@ -25,9 +25,11 @@ class GetSessionSkillTreeUseCase:
                                     "label": node.get("name"),
                                     "type": node.get("type", "skill"),
                                     "level": node.get("level", 1),
+                                    "original_node_id": node.get("original_node_id"), # NEW: Pass original mapping
                                     "data": {
                                         "description": node.get("description"),
-                                        "status": "not_started"
+                                        "status": "not_started",
+                                        "metadata": node.get("metadata", {}) # NEW: Pass full metadata
                                     },
                                     "position": {"x": 0, "y": 0}
                                 }

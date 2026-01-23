@@ -25,7 +25,6 @@ from modules.skill_tree.usecases.get_resources import GetNodeResourcesUseCase
 @router.get("/nodes/{node_id}/resources", response_model=List[ResourceResponse])
 async def get_node_resources(
     node_id: str,
-    node_name: Optional[str] = Query(None),
     user_id: UUID = Depends(get_current_user_id),
     usecase: GetNodeResourcesUseCase = Depends(get_node_resources_usecase)
 ):
@@ -253,6 +252,7 @@ async def generate_skill_tree(
                         "type": node.type,
                         "parentId": node.parent_id,
                         "level": node.level,
+                        "original_node_id": node.id if hasattr(node, "id") and len(str(node.id)) > 20 else None, # Heuristic or check metadata
                         "filled": True,
                         "metadata": node.metadata
                     }

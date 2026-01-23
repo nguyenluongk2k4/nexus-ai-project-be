@@ -532,8 +532,23 @@ class SkillTreeRepository(SkillTreePort):
             new_nodes = []
             
             for node in node_data:
+                # Check for original mapping in node data or metadata
+                metadata = node.get("metadata") or {}
+                orig_id = node.get("original_node_id") or metadata.get("original_node_id")
+                
+                # If no original mapping, but the ID itself is a UUID, it might be the template ID
+                if not orig_id:
+                    try:
+                        node_id = str(node.get("id", ""))
+                        if len(node_id) > 20: 
+                            UUID(node_id)
+                            orig_id = node_id
+                    except (ValueError, TypeError):
+                        pass
+
                 new_node = UserSkillNodeModel(
                     tree_id=user_tree.id,
+                    original_node_id=UUID(orig_id) if orig_id else None,
                     name=node.get("name", "Untitled"),
                     description=node.get("description"),
                     status="not_started",
