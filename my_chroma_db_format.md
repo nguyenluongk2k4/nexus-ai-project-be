@@ -21,11 +21,15 @@ Metadata:
                  'phát triển các hệ thống phần mềm backend mạnh mẽ, dễ bảo '
                  'trì, mở rộng và tái sử dụng, đặc biệt khi làm việc với các '
                  'framework như Spring Boot hay .NET Core.',
-  'difficulty': 'intermediate',
+  
+  "metadata" :{
+   "parent_id": ""
+   'difficulty': 'intermediate',
   'level': 3,
   'name': 'Nguyên lý Lập trình hướng đối tượng (OOP)',
   'node_type': 'knowledge',
-  'template_name': 'kĩ thuật phần mềm'}
+  'template_name': 'kĩ thuật phần mềm'
+  }}
 ----------------------------------------
 --- Result 3 ---
 ID: 20d837d3-7aed-4754-bb74-7e4896c47676
