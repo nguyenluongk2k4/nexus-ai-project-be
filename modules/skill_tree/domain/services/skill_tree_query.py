@@ -115,12 +115,14 @@ USER REQUEST: "{message}"
 AVAILABLE SKILLS:
 {results_text}
 
-Create a hierarchical skill tree with 5-8 nodes. Return ONLY valid JSON in this exact format:
+Create a hierarchical skill tree with 5-8 nodes.
+IMPORTANT: The ROOT NODE name must be the specific Job Title, Role, or Main Skill (e.g., "Data Scientist", "Backend Developer"), NOT generic terms like "Job Readiness" or "Root Topic".
+
+Return ONLY valid JSON in this exact format:
 {{
   "nodes": [
-    {{"id": "1", "name": "Root Topic", "type": "root", "level": 0, "parent_id": null}},
-    {{"id": "2", "name": "Subtopic 1", "type": "skill", "level": 1, "parent_id": "1"}},
-    {{"id": "3", "name": "Subtopic 2", "type": "skill", "level": 1, "parent_id": "1"}}
+    {{"id": "1", "name": "<Specific Role/Skill Name>", "type": "root", "level": 0, "parent_id": null}},
+    {{"id": "2", "name": "Subtopic 1", "type": "skill", "level": 1, "parent_id": "1"}}
   ]
 }}
 
@@ -192,7 +194,7 @@ INPUT: "{message}"
 OUTPUT FORMAT (JSON only, no markdown):
 {{
   "intent": "learn",
-  "main_topic": "chủ đề chính bằng tiếng Anh",
+  "main_topic": "Specific Job Title or Technology (e.g., 'Backend Engineer', 'Data Scientist'). NO generic terms.",
   "sub_topics": ["topic1", "topic2"],
   "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
   "difficulty_hint": "beginner" | "intermediate" | "advanced" | null,

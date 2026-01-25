@@ -39,6 +39,22 @@ class Settings(BaseSettings):
     # LLM Model
     LLM_MODEL: str = "gemini-2.5-flash"
     SKILL_MATCH_THRESHOLD: float = 0.6
+
+    # Cloudinary
+    CLOUDINARY_CLOUD_NAME: Optional[str] = None
+    CLOUDINARY_API_KEY: Optional[str] = None
+    CLOUDINARY_API_SECRET: Optional[str] = None
+    CLOUDINARY_FOLDER: str = "nexus_ai/uploads"
+
+    # Context Limits
+    MAX_FILE_CONTEXT_CHARS: int = 15000  # ~4k tokens, safe for flash model
+    FILE_CHUNK_SIZE: int = 2000
+    FILE_CHUNK_OVERLAP: int = 200
+
+    # Upload Settings
+    UPLOAD_PROVIDER: str = "local" # local | cloudinary
+    UPLOAD_DIR: str = "static/uploads"
+    BASE_URL: str = "http://localhost:8000" # For local file links
     
     @property
     def gemini_key(self) -> Optional[str]:

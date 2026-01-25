@@ -117,7 +117,8 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                 id=message.id if message.id else uuid4(),
                 session_id=message.session_id,
                 role=message.role.value if isinstance(message.role, MessageRole) else message.role,
-                content=message.content
+                content=message.content,
+                attachments=message.attachments # Added attachments
             )
             db.add(model)
             await db.commit()
@@ -128,6 +129,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                 session_id=_to_uuid(model.session_id),
                 role=MessageRole(model.role),
                 content=model.content,
+                attachments=model.attachments or [], # Added attachments
                 created_at=model.created_at
             )
     
@@ -150,6 +152,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                     session_id=_to_uuid(m.session_id),
                     role=MessageRole(m.role),
                     content=m.content,
+                    attachments=m.attachments or [], # Added attachments
                     created_at=m.created_at
                 )
                 for m in reversed(models)

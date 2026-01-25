@@ -67,3 +67,8 @@ class VectorStorePort(ABC):
     def add_documents(self, documents: List[str], ids: List[str]) -> None:
         """Add documents to vector store"""
         pass
+    
+    @abstractmethod
+    def compute_similarity(self, query: str, texts: List[str]) -> List[float]:
+        """Compute cosine similarity between query and list of texts"""
+        pass

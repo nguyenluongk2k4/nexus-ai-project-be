@@ -9,6 +9,7 @@ class ChatMessageRequest(BaseModel):
     """Request for sending a chat message"""
     text: str
     session_id: Optional[str] = None
+    attachments: list[dict] = []
 
 
 class ChatMessageResponse(BaseModel):
@@ -33,4 +34,5 @@ class MessageResponse(BaseModel):
     id: str
     role: str
     content: str
+    attachments: list[dict] = []
     created_at: datetime

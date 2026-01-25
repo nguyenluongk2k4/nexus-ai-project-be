@@ -21,6 +21,7 @@ class Message:
     role: MessageRole
     content: str
     id: UUID = field(default_factory=uuid4)
+    attachments: List[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
 

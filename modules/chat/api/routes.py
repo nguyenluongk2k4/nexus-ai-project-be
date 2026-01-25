@@ -56,7 +56,7 @@ async def send_message(data: ChatMessageRequest):
     
     # Use ChatbotService
     try:
-        response = await chatbot.respond(UUID(session_id), data.text)
+        response = await chatbot.respond(UUID(session_id), data.text, data.attachments)
         logger.info(f"✅ Processed message for session: {session_id}")
     except Exception as e:
         logger.error(f"❌ ChatbotService error: {e}")
@@ -113,6 +113,7 @@ async def get_session_messages(session_id: str, user_id: UUID = Depends(get_curr
             id=str(m.id),
             role=m.role.value,
             content=m.content,
+            attachments=m.attachments, # Added attachments
             created_at=m.created_at
         )
         for m in messages
@@ -255,7 +256,8 @@ async def websocket_chat(websocket: WebSocket):
                     
                     try:
                         # 4. Chat Processing
-                        response = await chatbot.respond(UUID(session_id), text)
+                        attachments = data.get("attachments", [])
+                        response = await chatbot.respond(UUID(session_id), text, attachments)
                         logger.info(f"✅ [WS] Processed message for {session_id}")
                         
                         await websocket.send_text(json.dumps({
@@ -271,7 +273,12 @@ async def websocket_chat(websocket: WebSocket):
                             skill_tree_service = get_skill_tree_query_service()
                             
                             # Quick check if this is a skill tree related query
-                            is_tree_query = await skill_tree_service.is_skill_tree_query(text)
+                            # Context-aware tree generation
+                            # Combine user query with AI response (which contains file analysis)
+                            # This allows "this job" queries to work because AI response has the details.
+                            tree_context = f"{text}\n\nContext from AI: {response[:2000]}" # Limit context length
+                            
+                            is_tree_query = await skill_tree_service.is_skill_tree_query(tree_context)
                             
                             if is_tree_query:
                                 logger.info(f"🎯 [WS] Detected skill tree query, signaling frontend...")
@@ -280,7 +287,7 @@ async def websocket_chat(websocket: WebSocket):
                                 await websocket.send_text(json.dumps({
                                     "type": "tree_generating",
                                     "session_id": session_id,
-                                    "message": text  # Pass the message for HTTP call
+                                    "message": tree_context  # Pass the RICH context for generation
                                 }))
                                     
                         except Exception as tree_err:

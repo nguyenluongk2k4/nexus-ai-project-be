@@ -22,6 +22,9 @@ from modules.purchase.api.routes import router as purchase_router
 from modules.subscription.api.routes import router as subscription_router
 # Timeline Router
 from modules.timeline.api.routes import router as timeline_router
+# Upload Router
+from app.modules.upload.api.routes import router as upload_router
+
 # Shared database
 from shared.database.connection import init_db
 from shared.logger import configure_logging, get_logger
@@ -80,6 +83,7 @@ app = FastAPI(
 - 📚 **Learning Progress** - Theo dõi tiến độ học tập
 - 💬 **Forum** - Diễn đàn thảo luận
 - 💼 **Jobs** - Gợi ý việc làm dựa trên skills
+- 📁 **Start Upload** - Upload file cho Gemini
 
 ## Architecture
 - **Backend**: FastAPI + SQLAlchemy (PostgreSQL/SQLite)
@@ -135,6 +139,41 @@ app.include_router(profile_router, prefix="/api")
 app.include_router(purchase_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
 app.include_router(timeline_router)  # Already has /api/timeline prefix
+app.include_router(upload_router, prefix="/api")
+
+
+# ============================================================
+# STATIC FILES & FRONTEND SERVING
+# ============================================================
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+from config.settings import settings
+
+# Uploads static path
+upload_dir = os.path.join(os.getcwd(), settings.UPLOAD_DIR)
+os.makedirs(upload_dir, exist_ok=True)
+app.mount("/static/uploads", StaticFiles(directory=upload_dir), name="uploads")
+
+# Frontend static files (built from React/Vite)
+frontend_dir = os.path.join(os.getcwd(), "static/frontend")
+if os.path.exists(frontend_dir):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Skip API routes
+        if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc") or full_path.startswith("openapi.json"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404)
+        
+        # Check if the file exists in the frontend dir (for favicon, etc.)
+        file_path = os.path.join(frontend_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+            
+        # Otherwise serve index.html for React Router
+        return FileResponse(os.path.join(frontend_dir, "index.html"))
 
 
 # ============================================================

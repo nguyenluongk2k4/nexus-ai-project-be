@@ -190,3 +190,20 @@ class ChromaAdapter(VectorStorePort):
         except Exception as e:
             print(f"Error adding documents: {e}")
             raise
+
+    def compute_similarity(self, query: str, texts: List[str]) -> List[float]:
+        """Compute cosine similarity between query and list of texts"""
+        try:
+            from sentence_transformers import util
+            
+            # Encode query and texts
+            query_emb = self.embedder.encode(query, convert_to_tensor=True)
+            text_embs = self.embedder.encode(texts, convert_to_tensor=True)
+            
+            # Compute cosine similarity
+            scores = util.cos_sim(query_emb, text_embs)[0]
+            
+            return scores.tolist()
+        except Exception as e:
+            print(f"Error computing similarity: {e}")
+            return [0.0] * len(texts)

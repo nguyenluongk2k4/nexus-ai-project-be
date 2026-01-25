@@ -34,6 +34,7 @@ class MessageModel(Base):
     session_id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"))
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # user, assistant, system
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    attachments: Mapped[Optional[list]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     
     # Relationships
