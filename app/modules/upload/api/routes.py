@@ -10,7 +10,7 @@ router = APIRouter(
 
 logger = get_logger(__name__, "UPLOAD_ROUTE")
 
-@router.post("/", response_model=UploadResponse)
+@router.post("", response_model=UploadResponse)
 async def upload_file(file: UploadFile = File(...)):
     """
     Upload a file to Gemini.
