@@ -18,7 +18,9 @@ class UserModel(Base):
     id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Allow password to be nullable for Google OAuth users
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    google_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255))
     avatar_url: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

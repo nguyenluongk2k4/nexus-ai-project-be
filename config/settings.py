@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None  # Alias
     
+    # Google OAuth
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    API_BASE_URL: str = "http://localhost:8000" # Base URL for callback construction
+    
     # JWT
     JWT_SECRET: str = "khe_nhat_fpt"
     JWT_ALGORITHM: str = "HS256"
@@ -54,7 +59,11 @@ class Settings(BaseSettings):
     # Upload Settings
     UPLOAD_PROVIDER: str = "local" # local | cloudinary
     UPLOAD_DIR: str = "static/uploads"
+    UPLOAD_DIR: str = "static/uploads"
     BASE_URL: str = "http://localhost:8000" # For local file links
+    
+    # Frontend URL for Redirects
+    FRONTEND_URL: str = "http://localhost:3000"
     
     @property
     def gemini_key(self) -> Optional[str]:

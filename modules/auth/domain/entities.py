@@ -16,6 +16,7 @@ class User:
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     is_active: bool = True
+    google_id: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     last_login_at: Optional[datetime] = None

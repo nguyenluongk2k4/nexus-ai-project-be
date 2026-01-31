@@ -37,18 +37,28 @@ class JWTService:
     def decode_token(self, token: str) -> Optional[dict]:
         """Decode and verify JWT token"""
         try:
+            print(f"[JWT] Decoding token with secret: {self.secret_key[:10]}...")
+            print(f"[JWT] Algorithm: {self.algorithm}")
+            print(f"[JWT] Token (first 50): {token[:50]}...")
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+            print(f"[JWT] Successfully decoded. Payload: {payload}")
             return payload
-        except jwt.ExpiredSignatureError:
+        except jwt.ExpiredSignatureError as e:
+            print(f"[JWT] Token expired: {e}")
             return None
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as e:
+            print(f"[JWT] Invalid token: {e}")
             return None
     
     def get_user_id_from_token(self, token: str) -> Optional[str]:
         """Extract user_id from token"""
+        print(f"[JWT] Getting user_id from token...")
         payload = self.decode_token(token)
         if payload:
-            return payload.get("sub")
+            user_id = payload.get("sub")
+            print(f"[JWT] Extracted user_id: {user_id}")
+            return user_id
+        print(f"[JWT] Failed to get user_id (payload is None)")
         return None
 
 

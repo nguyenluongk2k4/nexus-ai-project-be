@@ -71,6 +71,7 @@ class UserRepositoryImpl(AuthRepositoryPort):
                 password_hash=user.password_hash,
                 full_name=user.full_name,
                 avatar_url=user.avatar_url,
+                google_id=user.google_id,
                 is_active=user.is_active
             )
             db.add(model)
@@ -106,6 +107,8 @@ class UserRepositoryImpl(AuthRepositoryPort):
             model.full_name = user.full_name
             model.email = user.email
             model.avatar_url = user.avatar_url
+            if user.google_id:
+                model.google_id = user.google_id
             model.updated_at = datetime.now()
             
             await db.commit()
@@ -122,6 +125,7 @@ class UserRepositoryImpl(AuthRepositoryPort):
             password_hash=model.password_hash,
             full_name=model.full_name,
             avatar_url=model.avatar_url,
+            google_id=model.google_id,
             is_active=model.is_active,
             created_at=model.created_at,
             updated_at=model.updated_at,
