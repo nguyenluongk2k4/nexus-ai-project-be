@@ -3,6 +3,7 @@
 
 from typing import List, Optional
 from uuid import UUID
+from datetime import datetime
 
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
@@ -188,7 +189,15 @@ class SkillTreeRepository(SkillTreePort):
                 session.add(progress)
             
             await session.commit()
-            return progress
+            
+            # Return dict to avoid serialization issues
+            return {
+                "id": str(progress.id),
+                "resource_id": str(progress.resource_id),
+                "status": progress.status,
+                "progress_percent": progress.progress_percent,
+                "updated_at": progress.updated_at.isoformat() if progress.updated_at else datetime.now().isoformat()
+            }
 
     async def get_user_tree(self, user_id: UUID) -> Optional[dict]:
         """Get the user's active skill tree. If none, return default Template tree structure.

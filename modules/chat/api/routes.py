@@ -318,13 +318,20 @@ async def websocket_chat(websocket: WebSocket):
                     "message": f"Unknown message type: {msg_type}"
                 }))
 
+            except WebSocketDisconnect:
+                logger.info("[WS] Client disconnected in loop")
+                break  # Exit loop cleanly on disconnect
             except Exception as loop_err:
                 logger.error(f"❌ [WS] Loop Error: {loop_err}", exc_info=True)
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "error": "internal_error",
-                    "message": "Server internal error"
-                }))
+                try:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "error": "internal_error",
+                        "message": "Server internal error"
+                    }))
+                except Exception:
+                    # Connection already closed, just break the loop
+                    break
                 continue
     
     except WebSocketDisconnect:

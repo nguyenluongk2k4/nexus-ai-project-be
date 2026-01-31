@@ -22,6 +22,8 @@ from modules.purchase.api.routes import router as purchase_router
 from modules.subscription.api.routes import router as subscription_router
 # Timeline Router
 from modules.timeline.api.routes import router as timeline_router
+# Quiz Router
+from modules.quiz.api.routes import router as quiz_router
 # Upload Router
 from app.modules.upload.api.routes import router as upload_router
 
@@ -139,6 +141,7 @@ app.include_router(profile_router, prefix="/api")
 app.include_router(purchase_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
 app.include_router(timeline_router)  # Already has /api/timeline prefix
+app.include_router(quiz_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
 
 
