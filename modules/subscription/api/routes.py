@@ -266,6 +266,34 @@ async def purchase_plan(
     
     await session.commit()
     
+    # Coins Integration: Award 100 coins bonus for purchase
+    try:
+        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository, SQLAlchemyMissionRepository
+        from modules.coins.domain.services.coins_service import CoinsService
+        from modules.coins.domain.services.mission_service import MissionService
+        
+        coins_repo = SQLAlchemyCoinsRepository(session)
+        coins_service = CoinsService(coins_repo)
+        mission_repo = SQLAlchemyMissionRepository(session)
+        mission_service = MissionService(mission_repo, coins_service)
+        
+        # 1. Direct Award
+        await coins_service.award_coins(
+            user_id=user.id,
+            amount=100,
+            transaction_type='purchase_bonus',
+            description=f"Bonus for purchasing {plan.name}"
+        )
+        
+        # 2. Trigger Mission
+        await mission_service.update_progress(
+            user_id=user.id,
+            mission_type='purchase_plan',
+            progress_data={'plan_id': data.plan_id}
+        )
+    except Exception as e:
+        print(f"Failed to award bonus coins: {e}")
+
     return PurchasePlanResponse(
         success=True,
         message=f"Đã nâng cấp lên gói {plan.name} thành công!",

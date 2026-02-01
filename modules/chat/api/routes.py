@@ -11,6 +11,12 @@ from modules.chat.api.schemas import ChatMessageRequest, ChatMessageResponse, Ch
 from modules.chat.providers import get_chatbot_service
 from modules.auth.providers import get_jwt_service, get_user_repository
 from modules.auth.api.deps import get_current_user_id
+# Coins integration
+from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository, SQLAlchemyMissionRepository
+from modules.coins.domain.services.coins_service import CoinsService
+from modules.coins.domain.services.mission_service import MissionService
+from shared.database.connection import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -35,7 +41,11 @@ security = HTTPBearer()
     summary="Gửi tin nhắn cho AI",
     description="Gửi tin nhắn và nhận phản hồi từ AI chatbot (RAG-enhanced)"
 )
-async def send_message(data: ChatMessageRequest):
+async def send_message(
+    data: ChatMessageRequest, 
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Gửi tin nhắn cho AI và nhận câu trả lời.
     Sử dụng ChatbotService (DDD layer separation)
@@ -54,6 +64,29 @@ async def send_message(data: ChatMessageRequest):
         new_session = ChatSession(id=UUID(session_id), title=data.text[:50])
         await chatbot.chat_repo.create_session(new_session)
     
+    # Coins Integration: Deduct 5 coins per message
+    coins_repo = SQLAlchemyCoinsRepository(db)
+    coins_service = CoinsService(coins_repo)
+    
+    try:
+        await coins_service.spend_coins(
+            user_id=UUID(user_id),
+            amount=5,
+            service_type='ai_chat',
+            description=f"AI Chat: {data.text[:30]}"
+        )
+        
+        # Update mission progress: AI Chat count
+        mission_repo = SQLAlchemyMissionRepository(db)
+        mission_service = MissionService(mission_repo, coins_service)
+        await mission_service.update_progress(
+            user_id=UUID(user_id),
+            mission_type='ai_chat',
+            progress_data={'increment': 1, 'field': 'count'}
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=402, detail="Bạn không đủ xu để sử dụng tính năng này. Hãy làm nhiệm vụ để nhận thêm xu!")
+
     # Use ChatbotService
     try:
         response = await chatbot.respond(UUID(session_id), data.text, data.attachments)
@@ -257,41 +290,84 @@ async def websocket_chat(websocket: WebSocket):
                     try:
                         # 4. Chat Processing
                         attachments = data.get("attachments", [])
-                        response = await chatbot.respond(UUID(session_id), text, attachments)
-                        logger.info(f"✅ [WS] Processed message for {session_id}")
                         
-                        await websocket.send_text(json.dumps({
-                            "type": "bot_message",
-                            "text": response,
-                            "session_id": session_id
-                        }))
-                        
-                        # 5. Skill Tree Signal - Let frontend call HTTP API to generate tree
-                        # Only send signal that tree generation is possible, frontend will call HTTP
-                        try:
-                            from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
-                            skill_tree_service = get_skill_tree_query_service()
-                            
-                            # Quick check if this is a skill tree related query
-                            # Context-aware tree generation
-                            # Combine user query with AI response (which contains file analysis)
-                            # This allows "this job" queries to work because AI response has the details.
-                            tree_context = f"{text}\n\nContext from AI: {response[:2000]}" # Limit context length
-                            
-                            is_tree_query = await skill_tree_service.is_skill_tree_query(tree_context)
-                            
-                            if is_tree_query:
-                                logger.info(f"🎯 [WS] Detected skill tree query, signaling frontend...")
-                                
-                                # Send signal to frontend to call HTTP streaming endpoint
-                                await websocket.send_text(json.dumps({
-                                    "type": "tree_generating",
-                                    "session_id": session_id,
-                                    "message": tree_context  # Pass the RICH context for generation
-                                }))
+                        # 4.1 Coins & Missions Integration
+                        skip_bot_response = False
+                        if user_id:
+                            # Use SQLAlchemy session from deps if possible, but the route doesn't have it as an argument
+                            # We need to get a DB session here
+                            from shared.database.connection import get_db
+                            async for db in get_db():
+                                try:
+                                    # Coins Integration: Deduct 5 coins per message
+                                    coins_repo = SQLAlchemyCoinsRepository(db)
+                                    coins_service = CoinsService(coins_repo)
                                     
-                        except Exception as tree_err:
-                            logger.error(f"⚠️ [WS] Tree check error (non-fatal): {tree_err}")
+                                    await coins_service.spend_coins(
+                                        user_id=user_id,
+                                        amount=5,
+                                        service_type='ai_chat',
+                                        description=f"AI Chat (WS): {text[:30]}"
+                                    )
+                                    
+                                    # Update mission progress: AI Chat count
+                                    mission_repo = SQLAlchemyMissionRepository(db)
+                                    mission_service = MissionService(mission_repo, coins_service)
+                                    await mission_service.update_progress(
+                                        user_id=user_id,
+                                        mission_type='ai_chat',
+                                        progress_data={'increment': 1, 'field': 'count'}
+                                    )
+                                    break # Success, exit session loop
+                                except ValueError as e:
+                                    await websocket.send_text(json.dumps({
+                                        "type": "error",
+                                        "error": "insufficient_coins",
+                                        "message": "Bạn không đủ xu để sử dụng tính năng này. Hãy làm nhiệm vụ để nhận thêm xu!",
+                                        "session_id": session_id
+                                    }))
+                                    skip_bot_response = True
+                                    break # Exit DB session loop, but don't 'return' (keep WS alive)
+                                except Exception as e:
+                                    logger.error(f"❌ [WS] Deduct coins/mission error: {e}")
+                                    # Non-fatal for the chat itself, but good to know
+                                    break
+
+                        if not skip_bot_response:
+                            response = await chatbot.respond(UUID(session_id), text, attachments)
+                            logger.info(f"✅ [WS] Processed message for {session_id}")
+                            
+                            await websocket.send_text(json.dumps({
+                                "type": "bot_message",
+                                "text": response,
+                                "session_id": session_id
+                            }))
+                            
+                            # 5. Skill Tree Signal - Let frontend call HTTP API to generate tree
+                            # Only send signal that tree generation is possible, frontend will call HTTP
+                            try:
+                                from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
+                                skill_tree_service = get_skill_tree_query_service()
+                                
+                                # Quick check if this is a skill tree related query
+                                # Context-aware tree generation
+                                # Combine user query with AI response (which contains file analysis)
+                                # This allows "this job" queries to work because AI response has the details.
+                                tree_context = f"{text}\n\nContext from AI: {response[:2000]}" # Limit context length
+                                
+                                is_tree_query = await skill_tree_service.is_skill_tree_query(tree_context)
+                                
+                                if is_tree_query:
+                                    logger.info(f"🎯 [WS] Detected skill tree query, signaling frontend...")
+                                    
+                                    # Send signal to frontend to call HTTP streaming endpoint
+                                    await websocket.send_text(json.dumps({
+                                        "type": "tree_generating",
+                                        "session_id": session_id,
+                                        "message": tree_context  # Pass the RICH context for generation
+                                    }))
+                            except Exception as tree_err:
+                                logger.error(f"⚠️ [WS] Tree check error (non-fatal): {tree_err}")
 
                         
                     except Exception as inference_err:

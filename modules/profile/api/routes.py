@@ -12,6 +12,10 @@ from modules.auth.domain.entities import User
 from shared.database.connection import get_db
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
+# Coins integration
+from modules.coins.infrastructure.repository import SQLAlchemyMissionRepository, SQLAlchemyCoinsRepository
+from modules.coins.domain.services.coins_service import CoinsService
+from modules.coins.domain.services.mission_service import MissionService
 
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
@@ -148,6 +152,22 @@ async def update_profile(
     # Save to database
     updated_user = await user_repo.update(user)
     
+    # Coins Integration: Reward for profile update
+    try:
+        coins_repo = SQLAlchemyCoinsRepository(session)
+        coins_service = CoinsService(coins_repo)
+        mission_repo = SQLAlchemyMissionRepository(session)
+        mission_service = MissionService(mission_repo, coins_service)
+        
+        await mission_service.update_progress(
+            user_id=user.id,
+            mission_type='update_profile',
+            progress_data={'completed': True}
+        )
+    except Exception as e:
+        # Don't fail the profile update if coins award fails
+        print(f"Failed to award coins for profile update: {e}")
+
     return ProfileResponse(
         id=str(updated_user.id),
         email=updated_user.email,
