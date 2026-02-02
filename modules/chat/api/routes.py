@@ -15,8 +15,9 @@ from modules.auth.api.deps import get_current_user_id
 from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository, SQLAlchemyMissionRepository
 from modules.coins.domain.services.coins_service import CoinsService
 from modules.coins.domain.services.mission_service import MissionService
-from shared.database.connection import get_db
+from shared.database.connection import get_db, get_db_context
 from sqlalchemy.ext.asyncio import AsyncSession
+from config.settings import settings
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -296,8 +297,8 @@ async def websocket_chat(websocket: WebSocket):
                         if user_id:
                             # Use SQLAlchemy session from deps if possible, but the route doesn't have it as an argument
                             # We need to get a DB session here
-                            from shared.database.connection import get_db
-                            async for db in get_db():
+                            from shared.database.connection import get_db_context
+                            async with get_db_context() as db:
                                 try:
                                     # Coins Integration: Deduct 5 coins per message
                                     coins_repo = SQLAlchemyCoinsRepository(db)
@@ -305,7 +306,7 @@ async def websocket_chat(websocket: WebSocket):
                                     
                                     await coins_service.spend_coins(
                                         user_id=user_id,
-                                        amount=5,
+                                        amount=settings.COIN_COST_AI_CHAT,
                                         service_type='ai_chat',
                                         description=f"AI Chat (WS): {text[:30]}"
                                     )
@@ -318,7 +319,6 @@ async def websocket_chat(websocket: WebSocket):
                                         mission_type='ai_chat',
                                         progress_data={'increment': 1, 'field': 'count'}
                                     )
-                                    break # Success, exit session loop
                                 except ValueError as e:
                                     await websocket.send_text(json.dumps({
                                         "type": "error",
@@ -327,11 +327,9 @@ async def websocket_chat(websocket: WebSocket):
                                         "session_id": session_id
                                     }))
                                     skip_bot_response = True
-                                    break # Exit DB session loop, but don't 'return' (keep WS alive)
                                 except Exception as e:
                                     logger.error(f"❌ [WS] Deduct coins/mission error: {e}")
-                                    # Non-fatal for the chat itself, but good to know
-                                    break
+                                    # Non-fatal for the chat itself
 
                         if not skip_bot_response:
                             response = await chatbot.respond(UUID(session_id), text, attachments)

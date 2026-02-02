@@ -43,10 +43,20 @@ class MissionService:
             if 'increment' in progress_data:
                 field = progress_data.get('field', 'count')
                 current_value = current_progress.get(field, 0)
-                current_progress[field] = current_value + progress_data['increment']
+                new_value = current_value + progress_data['increment']
+                current_progress[field] = new_value
+                
+                # Update visual progress string
+                required = mission.requirements.get('count', 1)
+                if new_value >= required:
+                    current_progress['progress'] = 'completed'
+                else:
+                    current_progress['progress'] = f"{new_value}/{required}"
             else:
                 # Otherwise, merge the new data
                 current_progress.update(progress_data)
+                if 'completed' in progress_data and progress_data['completed']:
+                    current_progress['progress'] = 'completed'
                 
             user_mission.progress = current_progress
             
@@ -57,7 +67,8 @@ class MissionService:
                 # Instead of 'completed', set to 'not_get_point' to allow manual claiming
                 user_mission.status = 'not_get_point'
                 user_mission.completed_at = datetime.now()
-                # Do NOT award coins here anymore
+                # Ensure progress is set to 'completed'
+                user_mission.progress['progress'] = 'completed'
             
             await self.repository.update_user_mission(user_mission)
 
@@ -79,6 +90,8 @@ class MissionService:
         # Update status and award coins
         user_mission.status = 'completed'
         user_mission.coins_earned = mission.coin_reward
+        # Update progress to the "claimed" state
+        user_mission.progress = {"completed": True}
         
         await self.coins_service.award_coins(
             user_id=user_id,

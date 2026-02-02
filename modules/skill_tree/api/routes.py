@@ -3,8 +3,9 @@ from pydantic import BaseModel
 
 from typing import List, Optional
 from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+from shared.database.connection import get_db, get_db_context
 
-from modules.auth.api.deps import get_current_user_id
 from modules.auth.api.deps import get_current_user_id
 
 router = APIRouter(prefix="/skill-tree", tags=["Skill Tree"])
@@ -14,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import asyncio
+from config.settings import settings
 
 from .schemas import ResourceResponse
 
@@ -223,12 +225,31 @@ class TreeGenerateRequest(BaseModel):
 @router.post("/generate")
 async def generate_skill_tree(
     request: TreeGenerateRequest,
-    user_id: UUID = Depends(get_current_user_id)
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Generate skill tree from user message using HTTP streaming.
     Returns SSE stream with status updates and final tree nodes.
     """
+    async with get_db_context() as db:
+        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository
+        from modules.coins.domain.services.coins_service import CoinsService
+        
+        coins_repo = SQLAlchemyCoinsRepository(db)
+        coins_service = CoinsService(coins_repo)
+        
+        try:
+            # Spend coins for tree generation
+            await coins_service.spend_coins(
+                user_id=user_id,
+                amount=settings.COIN_COST_SKILL_TREE_GEN,
+                service_type='skill_tree_generation',
+                description=f"Generated skill tree: {request.message[:50]}..."
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     async def event_generator():
         try:
             # Send initial status

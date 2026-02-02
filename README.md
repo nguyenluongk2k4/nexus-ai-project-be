@@ -100,12 +100,34 @@ python seed_from_json.py
 | `/api/admin/skills` | GET/POST | List/Create skills |
 | `/api/admin/resources` | GET/POST | List/Create learning resources |
 
-### Chat
+### Chat & Notifications
 | Endpoint | Method | Mô tả |
 |----------|--------|-------|
 | `/api/chat/session` | POST | Tạo session mới |
 | `/api/chat/message` | POST | Gửi message (HTTP) |
-| `/api/chat/ws/{session_id}` | WebSocket | Chat realtime |
+| `:8002/ws/notifications` | WebSocket | Thông báo và đồng bộ xu realtime |
+
+## 🚀 Chạy Microservices (Development)
+
+Hệ thống đã được tách thành các dịch vụ riêng biệt để tối ưu hiệu năng và khả năng mở rộng.
+
+### 1. Hạ tầng (Redis & Database)
+Chạy Redis broker (để các service giao tiếp với nhau):
+```bash
+./scripts/run_redis.sh
+```
+
+### 2. Notification Service (WebSocket)
+Dịch vụ chuyên trách xử lý các kết nối thời gian thực:
+```bash
+./scripts/run_notifications.sh
+```
+
+### 3. Main API Server
+Dịch vụ xử lý nghiệp vụ chính:
+```bash
+uvicorn app.main:app --reload --port 8000
+```
 
 ## WebSocket Protocol
 
@@ -150,3 +172,6 @@ docker build -t nexusai-backend .
 chroma run --host localhost --port 8001 --path ../chroma_db         
 
 python scripts/sync_chroma_db.py
+
+
+docker run -d -p 9443:9443 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data portainer/portainer-ce:latest
