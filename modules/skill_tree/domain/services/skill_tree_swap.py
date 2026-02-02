@@ -63,6 +63,7 @@ class SkillTreeSwapService:
         swapped_node["name"] = new_node_data.get("name")
         swapped_node["full_name"] = new_node_data.get("name") 
         swapped_node["description"] = new_node_data.get("description")
+        swapped_node["icon"] = new_node_data.get("icon", old_node.get("icon"))
         
         # Respect new type if provided
         swapped_node["type"] = new_node_data.get("type", old_node.get("type"))

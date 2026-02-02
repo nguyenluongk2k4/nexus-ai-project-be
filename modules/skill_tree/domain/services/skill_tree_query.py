@@ -22,6 +22,7 @@ class TreeNodeResult:
     type: str = "skill"  # root, specialization, ability, skill, knowledge
     parent_id: Optional[str] = None
     level: int = 0
+    icon: Optional[str] = None
     metadata: Optional[dict] = None
 
 
@@ -474,6 +475,7 @@ JSON only, không text khác."""
                     description=db_node.description,
                     type=expected_type,
                     level=expected_level,
+                    icon=db_node.icon,
                     parent_id=parent_id,
                     metadata={
                         "difficultyLevel": db_node.difficulty_level or "beginner",
@@ -494,6 +496,7 @@ JSON only, không text khác."""
                     description=metadata.get("description", f"{expected_type}: {full_node_name}"),
                     type=expected_type,
                     level=expected_level,
+                    icon=metadata.get("icon"),
                     parent_id=parent_id
                 )
                 nodes.append(node_result)
@@ -594,11 +597,25 @@ JSON only, không text khác."""
         if node_name:
             seen_names.add(node_name) # Don't suggest itself
         
+        # STEP 1: Pre-fetch icons from DB for all candidates to avoid nulls
+        candidate_ids = [c.get("id") for c in candidates if self.is_valid_uuid(c.get("id"))]
+        db_icon_map = {}
+        if candidate_ids:
+            try:
+                repo = get_skill_tree_repository()
+                db_nodes = await repo.get_nodes_by_ids(candidate_ids)
+                db_icon_map = {str(n.id): n.icon for n in db_nodes if n.icon}
+            except Exception as e:
+                print(f"⚠️ Error pre-fetching icons for alternatives: {e}")
+
         for idx, c in enumerate(candidates):
             meta = c.get("metadata", {})
             c_type = meta.get("node_type", "").lower() 
             c_id = c.get("id")
             c_name = meta.get("name", "")
+            
+            # Fetch icon from DB map if not in metadata
+            c_icon = meta.get("icon") or db_icon_map.get(str(c_id))
             
             # Skip if already in tree
             if c_id in existing_ids_set:
@@ -628,6 +645,7 @@ JSON only, không text khác."""
                     "description": meta.get("description", ""),
                     "type": c_type,
                     "level": current_level,
+                    "icon": c_icon,
                     "similarity_score": sim_score,
                     "metadata": {
                         "difficultyLevel": meta.get("difficulty", "beginner")
@@ -669,6 +687,17 @@ JSON only, không text khác."""
                 [search_query], n_results_per_query=5, max_total=5, metadata_filter={"node_type": "skill"}
             )
             
+            # STEP 2: Pre-fetch icons for descendants
+            skill_ids = [s.get("id") for s in skills if self.is_valid_uuid(s.get("id"))]
+            db_icon_map = {}
+            if skill_ids:
+                try:
+                    repo = get_skill_tree_repository()
+                    db_nodes = await repo.get_nodes_by_ids(skill_ids)
+                    db_icon_map = {str(n.id): n.icon for n in db_nodes if n.icon}
+                except Exception as e:
+                    print(f"⚠️ Error pre-fetching icons for skills: {e}")
+
             # Select 2 distinct skills
             selected_skills = []
             seen = set()
@@ -676,15 +705,19 @@ JSON only, không text khác."""
                 name = s.get("metadata", {}).get("name", "")
                 if name and name not in seen:
                     seen.add(name)
+                    s_id = s.get("id")
+                    s_icon = s.get("metadata", {}).get("icon") or db_icon_map.get(str(s_id))
+                    
                     # Convert to TreeNode format
                     skill_node = {
-                        "id": s.get("id"),
+                        "id": s_id,
                         "name": name,
                         "description": s.get("metadata", {}).get("description", ""),
                         "type": "skill",
                         "level": 2,
                         "parentId": parent_id,
                         "filled": True,
+                        "icon": s_icon,
                         "metadata": s.get("metadata", {})
                     }
                     selected_skills.append(skill_node)
@@ -702,6 +735,22 @@ JSON only, không text khác."""
                     metadata_filter={"node_type": "knowledge"}
                 )
                 
+                # STEP 3: Pre-fetch icons for knowledge
+                all_knowledge_ids = []
+                for res in batch_results:
+                    for k in res:
+                        if self.is_valid_uuid(k.get("id")):
+                            all_knowledge_ids.append(k.get("id"))
+                
+                db_k_icon_map = {}
+                if all_knowledge_ids:
+                    try:
+                        repo = get_skill_tree_repository()
+                        db_k_nodes = await repo.get_nodes_by_ids(all_knowledge_ids)
+                        db_k_icon_map = {str(n.id): n.icon for n in db_k_nodes if n.icon}
+                    except Exception as e:
+                        print(f"⚠️ Error pre-fetching icons for knowledge: {e}")
+
                 # Process results for each skill
                 for i, skill in enumerate(selected_skills):
                     knowledges = batch_results[i]
@@ -712,14 +761,18 @@ JSON only, không text khác."""
                         k_name = k.get("metadata", {}).get("name", "")
                         if k_name and k_name not in seen_k:
                             seen_k.add(k_name)
+                            k_id = k.get("id")
+                            k_icon = k.get("metadata", {}).get("icon") or db_k_icon_map.get(str(k_id))
+                            
                             k_node = {
-                                "id": k.get("id"),
+                                "id": k_id,
                                 "name": k_name,
                                 "description": k.get("metadata", {}).get("description", ""),
                                 "type": "knowledge",
                                 "level": 3,
                                 "parentId": skill["id"], # Parent is the Skill
                                 "filled": True,
+                                "icon": k_icon,
                                 "metadata": k.get("metadata", {})
                             }
                             descendants.append(k_node)
@@ -735,20 +788,35 @@ JSON only, không text khác."""
                 [search_query], n_results_per_query=5, max_total=5, metadata_filter={"node_type": "knowledge"}
             )
             
+            # STEP 4: Pre-fetch icons for knowledge (single skill case)
+            k_ids = [k.get("id") for k in knowledges if self.is_valid_uuid(k.get("id"))]
+            db_k_icon_map = {}
+            if k_ids:
+                try:
+                    repo = get_skill_tree_repository()
+                    db_k_nodes = await repo.get_nodes_by_ids(k_ids)
+                    db_k_icon_map = {str(n.id): n.icon for n in db_k_nodes if n.icon}
+                except Exception as e:
+                    print(f"⚠️ Error pre-fetching icons for knowledge (single): {e}")
+
             seen = set()
             count = 0
             for k in knowledges:
                 name = k.get("metadata", {}).get("name", "")
                 if name and name not in seen:
                     seen.add(name)
+                    k_id = k.get("id")
+                    k_icon = k.get("metadata", {}).get("icon") or db_k_icon_map.get(str(k_id))
+                    
                     k_node = {
-                        "id": k.get("id"),
+                        "id": k_id,
                         "name": name,
                         "description": k.get("metadata", {}).get("description", ""),
                         "type": "knowledge",
                         "level": 3,
                         "parentId": parent_id,
                         "filled": True,
+                        "icon": k_icon,
                         "metadata": k.get("metadata", {})
                     }
                     descendants.append(k_node)

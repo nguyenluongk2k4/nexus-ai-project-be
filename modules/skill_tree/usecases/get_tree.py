@@ -14,8 +14,20 @@ class GetSessionSkillTreeUseCase:
                 if session and session.context_data:
                     tree_nodes = session.context_data.get("tree_nodes")
                     if tree_nodes:
-                        # Return tree from session context (generated via chat)
-                        # Convert flat nodes list to tree format expected by frontend
+                        # OPTIMIZATION: If icons are null but we have original_node_id, try to fetch icons
+                        # This 'heals' old session data that was generated without icons
+                        nodes_with_orig = [n for n in tree_nodes if not n.get("icon") and n.get("original_node_id")]
+                        icon_map = {}
+                        if nodes_with_orig:
+                            try:
+                                from modules.skill_tree.infrastructure.repository import get_skill_tree_repository
+                                repo = get_skill_tree_repository()
+                                orig_ids = [n.get("original_node_id") for n in nodes_with_orig]
+                                db_nodes = await repo.get_nodes_by_ids(orig_ids)
+                                icon_map = {str(db_n.id): db_n.icon for db_n in db_nodes if db_n.icon}
+                            except Exception as e:
+                                print(f"⚠️ Error auto-healing icons: {e}")
+
                         return {
                             "id": session_id,
                             "name": "Generated Tree",
@@ -25,11 +37,12 @@ class GetSessionSkillTreeUseCase:
                                     "label": node.get("name"),
                                     "type": node.get("type", "skill"),
                                     "level": node.get("level", 1),
-                                    "original_node_id": node.get("original_node_id"), # NEW: Pass original mapping
+                                    "icon": node.get("icon") or icon_map.get(str(node.get("original_node_id"))),
+                                    "original_node_id": node.get("original_node_id"),
                                     "data": {
                                         "description": node.get("description"),
                                         "status": "not_started",
-                                        "metadata": node.get("metadata", {}) # NEW: Pass full metadata
+                                        "metadata": node.get("metadata", {})
                                     },
                                     "position": {"x": 0, "y": 0}
                                 }

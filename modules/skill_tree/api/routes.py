@@ -120,15 +120,31 @@ async def get_node_children(
             print(f"⚠️ DB lookup failed: {e}")
             return {"nodes": [], "edges": []}
     
+    # OPTIMIZATION: Auto-heal icons for session nodes
+    nodes_with_orig = [n for n in children_nodes if not n.get("icon") and n.get("original_node_id")]
+    icon_map = {}
+    if nodes_with_orig:
+        try:
+            repo = get_skill_tree_repository()
+            orig_ids = [n.get("original_node_id") for n in nodes_with_orig]
+            db_nodes = await repo.get_nodes_by_ids(orig_ids)
+            icon_map = {str(db_n.id): db_n.icon for db_n in db_nodes if db_n.icon}
+        except Exception as e:
+            print(f"⚠️ Error auto-healing child icons: {e}")
+
     # Convert session context nodes to API format
     nodes = []
     edges = []
     for child in children_nodes:
+        # Get icon from node or healed map
+        node_icon = child.get("icon") or icon_map.get(str(child.get("original_node_id")))
+        
         nodes.append({
             "id": child["id"],
             "label": child.get("name"),
             "type": child.get("type", "skill"),
             "level": child.get("level", 2),
+            "icon": node_icon,
             "data": {
                 "description": child.get("description"),
                 "status": "not_started"
@@ -273,6 +289,7 @@ async def generate_skill_tree(
                         "type": node.type,
                         "parentId": node.parent_id,
                         "level": node.level,
+                        "icon": node.icon,
                         "original_node_id": node.id if hasattr(node, "id") and len(str(node.id)) > 20 else None, # Heuristic or check metadata
                         "filled": True,
                         "metadata": node.metadata

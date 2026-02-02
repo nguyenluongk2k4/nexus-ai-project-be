@@ -292,6 +292,7 @@ class SkillTreeRepository(SkillTreePort):
                     "label": node.name,
                     "type": node_type,
                     "level": node_level,  # CRITICAL: Frontend needs this for tree layout
+                    "icon": node.icon,
                     "data": {
                         "description": node.description,
                         "status": "not_started"
@@ -380,6 +381,7 @@ class SkillTreeRepository(SkillTreePort):
                     "label": node.name,
                     "type": node_type,
                     "level": node_level,
+                    "icon": node.icon,
                     "data": {
                         "description": node.description,
                         "status": "not_started"
@@ -560,6 +562,7 @@ class SkillTreeRepository(SkillTreePort):
                     original_node_id=UUID(orig_id) if orig_id else None,
                     name=node.get("name", "Untitled"),
                     description=node.get("description"),
+                    icon=node.get("icon"),
                     status="not_started",
                     progress_percent=0
                 )
