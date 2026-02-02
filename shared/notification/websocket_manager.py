@@ -17,23 +17,29 @@ class RedisNotificationPublisher:
 
     async def send_personal_message(self, user_id: str, message: Any):
         """Publish a message for a specific user to Redis"""
-        client = await self._get_client()
-        data = {
-            "user_id": user_id,
-            "payload": message
-        }
-        await client.publish(self.channel, json.dumps(data))
-        print(f"📡 [Redis] Published notification for user {user_id}")
+        try:
+            client = await self._get_client()
+            data = {
+                "user_id": user_id,
+                "payload": message
+            }
+            await client.publish(self.channel, json.dumps(data))
+            print(f"📡 [Redis] Published notification for user {user_id}")
+        except Exception as e:
+            print(f"⚠️ [Redis] Failed to publish personal notification: {e}")
 
     async def broadcast(self, message: Any):
         """Publish a broadcast message to Redis"""
-        client = await self._get_client()
-        data = {
-            "user_id": None,
-            "payload": message
-        }
-        await client.publish(self.channel, json.dumps(data))
-        print(f"📡 [Redis] Published broadcast notification")
+        try:
+            client = await self._get_client()
+            data = {
+                "user_id": None,
+                "payload": message
+            }
+            await client.publish(self.channel, json.dumps(data))
+            print(f"📡 [Redis] Published broadcast notification")
+        except Exception as e:
+            print(f"⚠️ [Redis] Failed to publish broadcast notification: {e}")
 
 # Compatibility singleton
 notification_manager = RedisNotificationPublisher()
