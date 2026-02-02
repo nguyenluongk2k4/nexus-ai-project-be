@@ -26,6 +26,8 @@ from modules.timeline.api.routes import router as timeline_router
 from modules.quiz.api.routes import router as quiz_router
 # Upload Router
 from app.modules.upload.api.routes import router as upload_router
+# Coins Router
+from modules.coins.api.routes import router as coins_router
 
 # Shared database
 from shared.database.connection import init_db
@@ -143,6 +145,7 @@ app.include_router(subscription_router, prefix="/api")
 app.include_router(timeline_router)  # Already has /api/timeline prefix
 app.include_router(quiz_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
+app.include_router(coins_router, prefix="/api")
 
 
 # ============================================================
