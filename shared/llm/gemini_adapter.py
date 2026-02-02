@@ -28,6 +28,9 @@ class GeminiAdapter(LLMPort):
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower():
+                return "Hệ thống đang bận do quá tải yêu cầu (Gemini Quota), vui lòng thử lại sau giây lát."
             raise RuntimeError(f"Failed to generate content: {e}")
     
     async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
@@ -38,4 +41,8 @@ class GeminiAdapter(LLMPort):
                 if chunk.text:
                     yield chunk.text
         except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower():
+                yield "Hệ thống đang bận do quá tải yêu cầu, vui lòng thử lại sau giây lát."
+                return
             raise RuntimeError(f"Failed to generate stream: {e}")

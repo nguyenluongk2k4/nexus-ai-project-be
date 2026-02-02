@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     # Frontend URL for Redirects
     FRONTEND_URL: str = "http://localhost:3000"
     
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+    NOTIFICATION_CHANNEL: str = "notifications"
+    
+    # Coin Costs
+    COIN_COST_AI_CHAT: int = 5
+    COIN_COST_SKILL_TREE_GEN: int = 5
+    
     @property
     def gemini_key(self) -> Optional[str]:
         """Get Gemini API key from either env var"""

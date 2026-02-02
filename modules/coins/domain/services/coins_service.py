@@ -3,6 +3,7 @@ from typing import Optional
 from modules.coins.domain.ports.coins_repository import CoinsRepositoryPort
 from modules.coins.domain.entities.transaction import UserCoins, CoinTransaction
 from datetime import datetime
+from shared.notification.websocket_manager import notification_manager
 
 class CoinsService:
     def __init__(self, repository: CoinsRepositoryPort):
@@ -51,6 +52,12 @@ class CoinsService:
         )
         await self.repository.create_transaction(transaction)
         
+        # Broadcast balance update
+        await notification_manager.send_personal_message(str(user_id), {
+            "type": "balance_update",
+            "current_coins": updated_user_coins.current_coins
+        })
+        
         return updated_user_coins.current_coins
 
     async def spend_coins(
@@ -77,8 +84,15 @@ class CoinsService:
             balance_after=updated_user_coins.current_coins,
             transaction_type='service',
             service_type=service_type,
+            reference_id=None,
             description=description
         )
         await self.repository.create_transaction(transaction)
+        
+        # Broadcast balance update
+        await notification_manager.send_personal_message(str(user_id), {
+            "type": "balance_update",
+            "current_coins": updated_user_coins.current_coins
+        })
         
         return updated_user_coins.current_coins
