@@ -34,6 +34,8 @@ class TimelineItemResponse(BaseModel):
     priority: str
     status: str
     estimatedTime: Optional[int]  # minutes
+    url: Optional[str] = None
+    platform: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -46,7 +48,7 @@ class TimelineListResponse(BaseModel):
 
 class AddTimelineRequest(BaseModel):
     resourceId: str
-    scheduledDate: str  # YYYY-MM-DD
+    scheduledDate: Optional[str] = None  # YYYY-MM-DD, can be null for Backlog
     deadline: Optional[str] = None
     priority: str = "medium"
 
@@ -83,7 +85,9 @@ async def get_timeline_items(
                 ti.deadline,
                 ti.priority,
                 COALESCE(lp.status, 'not_started') as status,
-                lr.estimated_duration
+                lr.estimated_duration,
+                lr.url,
+                lr.platform
             FROM timeline_items ti
             JOIN learning_resources lr ON ti.resource_id = lr.id
             LEFT JOIN template_skill_nodes tsn ON lr.skill_node_id = tsn.id
@@ -100,6 +104,10 @@ async def get_timeline_items(
     stats = {"total": 0, "not_started": 0, "in_progress": 0, "completed": 0}
     
     for row in rows:
+        # Debug: Print URL for first few items
+        # if row.url:
+        #    print(f"Found URL for {row.resource_name}: {row.url}")
+            
         items.append(TimelineItemResponse(
             id=str(row.id),
             resourceId=str(row.resource_id),
@@ -111,7 +119,9 @@ async def get_timeline_items(
             deadline=row.deadline.isoformat() if row.deadline else None,
             priority=row.priority or "medium",
             status=row.status or "not_started",
-            estimatedTime=row.estimated_duration
+            estimatedTime=row.estimated_duration,
+            url=row.url,
+            platform=row.platform
         ))
         
         stats["total"] += 1
@@ -151,26 +161,55 @@ async def add_timeline_item(
             node_name = node_row.name
     
     # Parse dates
-    scheduled = datetime.strptime(data.scheduledDate, "%Y-%m-%d").date()
-    deadline = datetime.strptime(data.deadline, "%Y-%m-%d").date() if data.deadline else None
+    scheduled = None
+    if data.scheduledDate:
+        scheduled = datetime.strptime(data.scheduledDate, "%Y-%m-%d").date()
     
-    # Insert timeline item
-    result = await db.execute(
-        text("""
-            INSERT INTO timeline_items (user_id, resource_id, scheduled_date, deadline, priority)
-            VALUES (:user_id, :resource_id, :scheduled, :deadline, :priority)
-            RETURNING id
-        """),
-        {
-            "user_id": user_id,
-            "resource_id": data.resourceId,
-            "scheduled": scheduled,
-            "deadline": deadline,
-            "priority": data.priority
-        }
+    deadline = None
+    if data.deadline:
+        deadline = datetime.strptime(data.deadline, "%Y-%m-%d").date()
+    
+    # Check if already exists (Smart Update for Backlog items)
+    existing = await db.execute(
+        text("SELECT id FROM timeline_items WHERE user_id = :user_id AND resource_id = :resource_id"),
+        {"user_id": user_id, "resource_id": data.resourceId}
     )
+    existing_row = existing.fetchone()
     
-    new_id = result.fetchone().id
+    if existing_row:
+        # Update existing item
+        await db.execute(
+            text("""
+                UPDATE timeline_items 
+                SET scheduled_date = :scheduled, deadline = :deadline, priority = :priority
+                WHERE id = :id
+            """),
+            {
+                "scheduled": scheduled,
+                "deadline": deadline,
+                "priority": data.priority,
+                "id": existing_row.id
+            }
+        )
+        new_id = existing_row.id
+    else:
+        # Insert new timeline item
+        result = await db.execute(
+            text("""
+                INSERT INTO timeline_items (user_id, resource_id, scheduled_date, deadline, priority)
+                VALUES (:user_id, :resource_id, :scheduled, :deadline, :priority)
+                RETURNING id
+            """),
+            {
+                "user_id": user_id,
+                "resource_id": data.resourceId,
+                "scheduled": scheduled,
+                "deadline": deadline,
+                "priority": data.priority
+            }
+        )
+        new_id = result.fetchone().id
+    
     await db.commit()
     
     return TimelineItemResponse(
@@ -179,7 +218,7 @@ async def add_timeline_item(
         resourceName=res.title,
         resourceType=res.resource_type or "article",
         nodeName=node_name,
-        scheduledDate=data.scheduledDate,
+        scheduledDate=data.scheduledDate or "",
         deadline=data.deadline,
         priority=data.priority,
         status="not_started",
@@ -210,11 +249,15 @@ async def update_timeline_item(
     
     if data.scheduledDate:
         updates.append("scheduled_date = :scheduled")
-        params["scheduled"] = datetime.strptime(data.scheduledDate, "%Y-%m-%d").date()
+        # Handle ISO format with time part
+        date_str = data.scheduledDate.split('T')[0]
+        params["scheduled"] = datetime.strptime(date_str, "%Y-%m-%d").date()
     
     if data.deadline:
         updates.append("deadline = :deadline")
-        params["deadline"] = datetime.strptime(data.deadline, "%Y-%m-%d").date()
+        # Handle ISO format with time part
+        date_str = data.deadline.split('T')[0]
+        params["deadline"] = datetime.strptime(date_str, "%Y-%m-%d").date()
     
     if data.priority:
         updates.append("priority = :priority")
@@ -240,19 +283,26 @@ async def update_timeline_item(
         resource_id = item.fetchone().resource_id
         
         # Update or insert learning_progress
+        # Use separate parameters to avoid AmbiguousParameterError and syntax issues with asyncpg
         await db.execute(
             text("""
                 INSERT INTO learning_progress (user_id, resource_id, status, started_at, completed_at)
-                VALUES (:user_id, :resource_id, :status, 
-                    CASE WHEN :status = 'in_progress' THEN NOW() ELSE NULL END,
-                    CASE WHEN :status = 'completed' THEN NOW() ELSE NULL END)
+                VALUES (:user_id, :resource_id, CAST(:status_val AS VARCHAR), 
+                    CASE WHEN :status_check_1 = 'in_progress' THEN NOW() ELSE NULL END,
+                    CASE WHEN :status_check_2 = 'completed' THEN NOW() ELSE NULL END)
                 ON CONFLICT (user_id, resource_id) DO UPDATE SET
-                    status = :status,
-                    started_at = CASE WHEN :status = 'in_progress' AND learning_progress.started_at IS NULL THEN NOW() ELSE learning_progress.started_at END,
-                    completed_at = CASE WHEN :status = 'completed' THEN NOW() ELSE NULL END,
+                    status = EXCLUDED.status,
+                    started_at = CASE WHEN EXCLUDED.status = 'in_progress' AND learning_progress.started_at IS NULL THEN NOW() ELSE learning_progress.started_at END,
+                    completed_at = CASE WHEN EXCLUDED.status = 'completed' THEN NOW() ELSE NULL END,
                     updated_at = NOW()
             """),
-            {"user_id": user_id, "resource_id": resource_id, "status": data.status}
+            {
+                "user_id": user_id, 
+                "resource_id": resource_id, 
+                "status_val": str(data.status),
+                "status_check_1": str(data.status),
+                "status_check_2": str(data.status)
+            }
         )
     
     await db.commit()
@@ -377,6 +427,7 @@ class ScheduleSuggestion(BaseModel):
     scheduledTime: str
     deadline: str
     priority: str
+    timelineItemId: Optional[str] = None  # Track origin backlog item
 
 
 class AIScheduleResponse(BaseModel):
@@ -405,18 +456,20 @@ async def ai_schedule(
             ORDER BY lr.title
         """
     else:
-        # Only get resources from user's timeline that are not completed
+        # Only get resources from Backlog (timeline items with NO scheduled date)
         query = """
             SELECT DISTINCT lr.id, lr.title, lr.estimated_duration, 
-                   COALESCE(tsn.name, 'General') as node_name
+                   COALESCE(tsn.name, 'General') as node_name,
+                   ti.id as timeline_item_id
             FROM timeline_items ti
             JOIN learning_resources lr ON ti.resource_id = lr.id
             LEFT JOIN template_skill_nodes tsn ON lr.skill_node_id = tsn.id
             LEFT JOIN learning_progress lp ON lp.resource_id = lr.id AND lp.user_id = :user_id
             WHERE ti.user_id = :user_id
+                AND ti.scheduled_date IS NULL  -- STRICTLY BACKLOG ONLY
                 AND COALESCE(lp.status, 'not_started') != 'completed'
             ORDER BY node_name, lr.title
-            LIMIT 10
+            LIMIT 20
         """
     
     result = await db.execute(text(query), {"user_id": user_id})
@@ -431,9 +484,18 @@ Bạn là AI assistant giúp xếp lịch học. Phân tích yêu cầu của us
 
 User nói: "{data.prompt}"
 
+Quy ước Mapping ngày trong tuần (BẮT BUỘC TUÂN THỦ):
+- Thứ 2 (Monday)    -> 0
+- Thứ 3 (Tuesday)   -> 1
+- Thứ 4 (Wednesday) -> 2
+- Thứ 5 (Thursday)  -> 3
+- Thứ 6 (Friday)    -> 4
+- Thứ 7 (Saturday)  -> 5
+- Chủ Nhật (Sunday) -> 6
+
 Trả về JSON với format:
 {{
-    "days_of_week": [0-6] (0=Monday, 6=Sunday),
+    "days_of_week": [0-6],
     "time_start": "HH:MM" (24h format),
     "duration_minutes": number (default 60),
     "priority": "high" | "medium" | "low"
@@ -442,6 +504,7 @@ Trả về JSON với format:
 Ví dụ:
 - "8h tối thứ 2,4,6" -> {{"days_of_week": [0, 2, 4], "time_start": "20:00", "duration_minutes": 60, "priority": "medium"}}
 - "sáng sớm 6h các ngày trong tuần" -> {{"days_of_week": [0,1,2,3,4], "time_start": "06:00", "duration_minutes": 60, "priority": "medium"}}
+- "thứ 3 và thứ 5" -> {{"days_of_week": [1, 3], ...}}
 
 Chỉ trả về JSON, không có text khác.
 '''
@@ -498,7 +561,8 @@ Chỉ trả về JSON, không có text khác.
                 scheduledDate=scheduled_date.isoformat(),
                 scheduledTime=time_start,
                 deadline=deadline_date.isoformat(),
-                priority=priority
+                priority=priority,
+                timelineItemId=str(res.timeline_item_id) if hasattr(res, 'timeline_item_id') else None
             ))
             
             resource_index += 1
@@ -519,7 +583,7 @@ async def confirm_ai_schedule(
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """Confirm and insert AI-generated schedule suggestions"""
+    """Confirm and insert/update AI-generated schedule suggestions"""
     
     created_count = 0
     
@@ -528,29 +592,82 @@ async def confirm_ai_schedule(
             scheduled = datetime.strptime(item.scheduledDate, "%Y-%m-%d").date()
             deadline = datetime.strptime(item.deadline, "%Y-%m-%d").date()
             
-            await db.execute(
-                text("""
-                    INSERT INTO timeline_items (user_id, resource_id, scheduled_date, deadline, priority)
-                    VALUES (:user_id, :resource_id, :scheduled, :deadline, :priority)
-                """),
-                {
-                    "user_id": user_id,
-                    "resource_id": item.resourceId,
-                    "scheduled": scheduled,
-                    "deadline": deadline,
-                    "priority": item.priority
-                }
-            )
+            # STRATEGY 1: Use specific Timeline Item ID if available (Best for Backlog)
+            target_id = None
+            if item.timelineItemId:
+                # Verify it belongs to user
+                check = await db.execute(
+                    text("SELECT id FROM timeline_items WHERE id = :id AND user_id = :user_id"),
+                    {"id": item.timelineItemId, "user_id": user_id}
+                )
+                if check.fetchone():
+                    target_id = item.timelineItemId
+
+            # STRATEGY 2: Fallback to Resource ID lookup (and cleanup duplicates)
+            if not target_id:
+                # Check if item exists (Backlog or otherwise) - Get ALL matching items
+                existing = await db.execute(
+                    text("SELECT id FROM timeline_items WHERE user_id = :user_id AND resource_id = :resource_id ORDER BY created_at ASC"),
+                    {"user_id": user_id, "resource_id": item.resourceId}
+                )
+                existing_rows = existing.fetchall()
+                
+                if existing_rows:
+                    target_id = existing_rows[0].id
+                    # Clean up duplicates
+                    if len(existing_rows) > 1:
+                        duplicate_ids = [row.id for row in existing_rows[1:]]
+                        duplicate_ids_str = ", ".join([f"'{dup_id}'" for dup_id in duplicate_ids])
+                        await db.execute(
+                            text(f"DELETE FROM timeline_items WHERE id IN ({duplicate_ids_str})")
+                        )
+
+            # EXECUTE UPDATE OR INSERT
+            if target_id:
+                # Update existing (Smart Update)
+                await db.execute(
+                    text("""
+                        UPDATE timeline_items 
+                        SET scheduled_date = :scheduled, 
+                            scheduled_time = :time,
+                            deadline = :deadline, 
+                            priority = :priority
+                        WHERE id = :id
+                    """),
+                    {
+                        "scheduled": scheduled,
+                        "time": item.scheduledTime,
+                        "deadline": deadline,
+                        "priority": item.priority,
+                        "id": target_id
+                    }
+                )
+            else:
+                # Insert new
+                await db.execute(
+                    text("""
+                        INSERT INTO timeline_items (user_id, resource_id, scheduled_date, scheduled_time, deadline, priority)
+                        VALUES (:user_id, :resource_id, :scheduled, :time, :deadline, :priority)
+                    """),
+                    {
+                        "user_id": user_id,
+                        "resource_id": item.resourceId,
+                        "scheduled": scheduled,
+                        "time": item.scheduledTime, # Add Time
+                        "deadline": deadline,
+                        "priority": item.priority
+                    }
+                )
             created_count += 1
         except Exception as e:
-            print(f"Error inserting item: {e}")
+            print(f"Error processing item: {e}")
             continue
     
     await db.commit()
     
     return {
         "success": True,
-        "message": f"Đã thêm {created_count} mục vào lịch học",
+        "message": f"Đã cập nhật lịch học cho {created_count} tài liệu",
         "createdCount": created_count
     }
 
