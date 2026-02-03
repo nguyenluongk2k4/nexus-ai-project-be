@@ -25,7 +25,7 @@ class ForumCategoryModel(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    icon: Mapped[Optional[str]] = mapped_column(String(50))
+    icon: Mapped[Optional[str]] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     
     # Relationships
@@ -109,7 +109,7 @@ class ForumCategoryCopyModel(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    icon: Mapped[Optional[str]] = mapped_column(String(50))
+    icon: Mapped[Optional[str]] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
 

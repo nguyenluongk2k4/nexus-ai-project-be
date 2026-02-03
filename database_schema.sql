@@ -55,7 +55,7 @@ CREATE TABLE skill_tree_templates (
     name VARCHAR(200) NOT NULL,
     description TEXT,
     category VARCHAR(100),
-    icon VARCHAR(50),
+    icon VARCHAR(500),
     color VARCHAR(20),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -68,7 +68,7 @@ CREATE TABLE template_skill_nodes (
     template_id UUID NOT NULL REFERENCES skill_tree_templates(id) ON DELETE CASCADE,
     name VARCHAR(200) NOT NULL,
     description TEXT,
-    icon VARCHAR(50),
+    icon VARCHAR(500),
     color VARCHAR(20),
     difficulty_level VARCHAR(20) CHECK (difficulty_level IN ('beginner', 'intermediate', 'advanced', 'expert')),
     estimated_hours INTEGER,
@@ -109,7 +109,7 @@ CREATE TABLE user_skill_nodes (
     original_node_id UUID REFERENCES template_skill_nodes(id),  -- Link tới node gốc nếu clone
     name VARCHAR(200) NOT NULL,
     description TEXT,
-    icon VARCHAR(50),
+    icon VARCHAR(500),
     color VARCHAR(20),
     status VARCHAR(20) DEFAULT 'not_started' CHECK (status IN ('not_started', 'in_progress', 'completed')),
     progress_percent INTEGER DEFAULT 0 CHECK (progress_percent >= 0 AND progress_percent <= 100),
@@ -206,7 +206,7 @@ CREATE TABLE forum_categories (
     name VARCHAR(100) NOT NULL,
     slug VARCHAR(100) UNIQUE NOT NULL,
     description TEXT,
-    icon VARCHAR(50),
+    icon VARCHAR(500),
     sort_order INTEGER DEFAULT 0
 );
 
