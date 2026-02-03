@@ -72,6 +72,12 @@ class UserRepositoryImpl(AuthRepositoryPort):
                 full_name=user.full_name,
                 avatar_url=user.avatar_url,
                 google_id=user.google_id,
+                role=user.role,
+                points=user.points,
+                balance=user.balance,
+                subscription_tier=user.subscription_tier,
+                subscription_expires_at=user.subscription_expires_at,
+                is_admin=user.is_admin,
                 is_active=user.is_active
             )
             db.add(model)
@@ -126,6 +132,12 @@ class UserRepositoryImpl(AuthRepositoryPort):
             full_name=model.full_name,
             avatar_url=model.avatar_url,
             google_id=model.google_id,
+            role=model.role,
+            points=model.points,
+            balance=model.balance,
+            subscription_tier=model.subscription_tier,
+            subscription_expires_at=model.subscription_expires_at,
+            is_admin=model.is_admin,
             is_active=model.is_active,
             created_at=model.created_at,
             updated_at=model.updated_at,

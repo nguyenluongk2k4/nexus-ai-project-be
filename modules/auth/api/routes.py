@@ -215,6 +215,13 @@ async def register(data: RegisterRequest):
             full_name=created_user.full_name,
             avatar_url=created_user.avatar_url,
             is_active=created_user.is_active,
+            balance=created_user.balance,
+            subscription_tier=created_user.subscription_tier,
+            subscription_expires_at=created_user.subscription_expires_at,
+            is_admin=created_user.is_admin,
+            role=created_user.role,
+            points=created_user.points,
+            forum_rank=created_user.forum_rank,
             created_at=created_user.created_at,
             last_login_at=created_user.last_login_at
         )
@@ -273,6 +280,13 @@ async def login(data: LoginRequest):
             full_name=user.full_name,
             avatar_url=user.avatar_url,
             is_active=user.is_active,
+            balance=user.balance,
+            subscription_tier=user.subscription_tier,
+            subscription_expires_at=user.subscription_expires_at,
+            is_admin=user.is_admin,
+            role=user.role,
+            points=user.points,
+            forum_rank=user.forum_rank,
             created_at=user.created_at,
             last_login_at=user.last_login_at
         )
@@ -293,6 +307,13 @@ async def get_me(user: User = Depends(get_current_user)):
         full_name=user.full_name,
         avatar_url=user.avatar_url,
         is_active=user.is_active,
+        balance=user.balance,
+        subscription_tier=user.subscription_tier,
+        subscription_expires_at=user.subscription_expires_at,
+        is_admin=user.is_admin,
+        role=user.role,
+        points=user.points,
+        forum_rank=user.forum_rank,
         created_at=user.created_at,
         last_login_at=user.last_login_at
     )

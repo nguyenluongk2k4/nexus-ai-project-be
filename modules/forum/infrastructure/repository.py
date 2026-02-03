@@ -2,7 +2,7 @@
 # Implements ForumRepositoryPort using SQLAlchemy async queries
 
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from modules.forum.infrastructure.models import (
     ForumCategoryModel, ForumPostModel, ForumCommentModel, PostLikeModel
 )
 from modules.auth.infrastructure.models import UserModel
+from modules.auth.domain.enums import ForumRank # Added import for ForumRank
 
 
 class ForumRepositoryImpl(ForumRepositoryPort):
@@ -29,16 +30,22 @@ class ForumRepositoryImpl(ForumRepositoryPort):
         """Convert UserModel to ForumUser entity"""
         if not user:
             return ForumUser(
-                id=None,
+                id=uuid4(), # Changed id=None to id=uuid4()
                 username="Anonymous",
                 full_name="Người dùng ẩn danh",
                 avatar="👤"
             )
+        # Calculate dynamic rank using ForumRank Enum
+        points = user.points if hasattr(user, 'points') else 0
+        rank = ForumRank.from_points(points).value # Refactored rank calculation
+
         return ForumUser(
             id=user.id,
             username=user.username,
             full_name=user.full_name,
-            avatar=user.avatar_url if user.avatar_url else "👤"
+            avatar=user.avatar_url if user.avatar_url else "👤",
+            role=rank,
+            points=points
         )
     
     async def get_categories(self) -> List[ForumCategory]:
@@ -342,8 +349,14 @@ class ForumRepositoryImpl(ForumRepositoryPort):
             )
             .outerjoin(UserModel, ForumPostModel.user_id == UserModel.id)
             .outerjoin(ForumCategoryModel, ForumPostModel.category_id == ForumCategoryModel.id)
-            .where(ForumPostModel.id == post_id)
         )
+        
+        # Now that frontend sends UUID strings directly, we just do a simple filter
+        try:
+            post_uuid = UUID(str(post_id))
+            stmt = stmt.where(ForumPostModel.id == post_uuid)
+        except (ValueError, AttributeError):
+            return None
         
         result = await self.session.execute(stmt)
         row = result.tuples().first()

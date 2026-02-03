@@ -5,7 +5,7 @@ from typing import Optional
 from uuid import uuid4
 import uuid as uuid_module
 
-from sqlalchemy import String, Boolean, DateTime
+from sqlalchemy import String, Boolean, DateTime, Numeric, BigInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,12 @@ class UserModel(Base):
     full_name: Mapped[Optional[str]] = mapped_column(String(255))
     avatar_url: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    balance: Mapped[float] = mapped_column(Numeric, default=0.0)
+    subscription_tier: Mapped[Optional[str]] = mapped_column(String(50), default="free")
+    subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    role: Mapped[str] = mapped_column(Text, default="member")
+    points: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

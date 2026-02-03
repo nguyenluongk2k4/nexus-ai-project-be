@@ -14,6 +14,8 @@ class ForumUser:
     username: str
     full_name: Optional[str]
     avatar: Optional[str]  # emoji or URL
+    role: Optional[str] = "member"
+    points: int = 0
 
 
 @dataclass

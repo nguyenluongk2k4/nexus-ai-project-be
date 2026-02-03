@@ -25,6 +25,7 @@ class UserResponse(BaseModel):
     username: str
     full_name: Optional[str]
     avatar: Optional[str]
+    rank: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -145,7 +146,8 @@ def post_to_response(post, is_liked: bool = False) -> PostResponse:
             id=str(post.author.id) if post.author.id else None,
             username=post.author.username,
             full_name=post.author.full_name,
-            avatar=post.author.avatar
+            avatar=post.author.avatar,
+            rank=post.author.role
         ),
         categoryId=str(post.category_id) if post.category_id else "",
         categoryName=post.category_name,
@@ -258,15 +260,13 @@ async def get_thread_details(
     """Get post details with comments"""
     repo = ForumRepositoryImpl(db)
     
-    try:
-        post_uuid = UUID(post_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid post ID format")
-    
-    post = await repo.get_post_by_id(post_uuid)
+    # The repo now handles both UUID and short-ID formats
+    post = await repo.get_post_by_id(post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
+    # Use the actual UUID from the found post for comments and like check
+    post_uuid = post.id
     comments = await repo.get_comments_by_post(post_uuid)
     
     # Check if current user has liked the post
@@ -285,7 +285,8 @@ async def get_thread_details(
                     id=str(c.author.id) if c.author.id else None,
                     username=c.author.username,
                     full_name=c.author.full_name,
-                    avatar=c.author.avatar
+                    avatar=c.author.avatar,
+                    rank=c.author.role
                 ),
                 content=c.content,
                 likes=0,  # Would need separate like count per comment
@@ -444,7 +445,8 @@ async def add_comment(
             id=str(comment.author.id) if comment.author.id else None,
             username=comment.author.username,
             full_name=comment.author.full_name,
-            avatar=comment.author.avatar
+            avatar=comment.author.avatar,
+            rank=comment.author.role
         ),
         content=comment.content,
         likes=0,

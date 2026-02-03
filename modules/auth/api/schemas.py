@@ -33,6 +33,13 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     is_active: bool = True
+    balance: float = 0.0
+    subscription_tier: Optional[str] = "free"
+    subscription_expires_at: Optional[datetime] = None
+    is_admin: bool = False
+    role: str = "member"
+    points: int = 0
+    forum_rank: str = "Member"
     created_at: datetime
     last_login_at: Optional[datetime] = None
 
