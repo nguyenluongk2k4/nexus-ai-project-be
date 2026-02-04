@@ -1,59 +1,115 @@
-# Docker Compose for NexusAI
-# PostgreSQL Database Only (ChromaDB runs locally in venv)
-
 services:
-  # ===========================================
-  # PostgreSQL Database
-  # ===========================================
-  postgres:
-    image: postgres:16-alpine
-    container_name: nexusai-postgres
-    restart: unless-stopped
+  # ---------------------------------------------------------------------------
+  # Database Service (PostgreSQL)
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:17-alpine
+    container_name: nexusai-db
     environment:
-      POSTGRES_USER: nexusai
-      POSTGRES_PASSWORD: nexusai_password
-      POSTGRES_DB: nexusai
-    ports:
-      - "5433:5432"
+      - POSTGRES_USER=nexusai
+      - POSTGRES_PASSWORD=nexusai_password
+      - POSTGRES_DB=nexusai
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexusai"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: always
+    networks:
+      - nexusai-network
 
-  # ===========================================
-  # Redis - Message Broker for WebSockets
-  # ===========================================
+  # ---------------------------------------------------------------------------
+  # Vector Database (ChromaDB)
+  # ---------------------------------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: nexusai-chromadb
+    volumes:
+      - ../chroma_db:/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/data
+      - ANONYMIZED_TELEMETRY=False
+    ports:
+      - "8001:8000"
+    restart: always
+    networks:
+      - nexusai-network
+
+  # ---------------------------------------------------------------------------
+  # Message Broker (Redis)
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: nexusai-redis
-    restart: unless-stopped
+    volumes:
+      - ../redis_data:/data
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - nexusai-network
 
-  # ===========================================
-  # Notification Service - Standalone Socket Server
-  # ===========================================
+  # ---------------------------------------------------------------------------
+  # Backend Service (FastAPI)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexusai-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nexusai:nexusai_password@db:5432/nexusai
+      - CHROMA_MODE=server
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET:-khe_nhat_fpt}
+      - DEBUG=True
+    volumes:
+      - ./data:/app/data
+      - ./static/uploads:/app/static/uploads
+    networks:
+      - nexusai-network
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Notification Service (WebSocket server)
+  # ---------------------------------------------------------------------------
   notification-service:
     build:
       context: .
       dockerfile: Dockerfile.notification
     container_name: nexusai-notifications
-    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
     ports:
       - "8002:8002"
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET=khe_nhat_fpt
-    depends_on:
-      - redis
+      - JWT_SECRET=${JWT_SECRET:-khe_nhat_fpt}
+      - DEBUG=True
+    networks:
+      - nexusai-network
+    restart: unless-stopped
 
-volumes:
-  postgres_data:
-  redis_data:
-
+networks:
+  nexusai-network:
+    name: nexusai-network
+    driver: bridge
