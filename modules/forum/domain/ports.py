@@ -6,7 +6,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from modules.forum.domain.entities import (
-    ForumCategory, ForumPost, ForumComment, ForumStats
+    ForumCategory, ForumPost, ForumComment, ForumStats, ContributorStats
 )
 
 
@@ -89,4 +89,14 @@ class ForumRepositoryPort(ABC):
     ) -> ForumComment:
         """Create a comment on a post, optionally as a reply to another comment"""
         pass
+    
+    @abstractmethod
+    async def get_top_contributors(self, limit: int, month: int, year: int) -> List[ContributorStats]:
+        """Get top contributors for a specific month based on scoring system:
+        - Create Post: 10 points
+        - Write Comment: 2 points
+        - Receive Like: 5 points
+        """
+        pass
+
 

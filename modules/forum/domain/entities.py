@@ -16,6 +16,7 @@ class ForumUser:
     avatar: Optional[str]  # emoji or URL
     role: Optional[str] = "member"
     points: int = 0
+    post_count: int = 0
 
 
 @dataclass
@@ -50,6 +51,7 @@ class ForumPost:
     category_slug: Optional[str] = None
     comment_count: int = 0
     like_count: int = 0
+    is_liked: bool = False
 
 
 @dataclass
@@ -82,3 +84,15 @@ class ForumStats:
     total_posts: int
     total_members: int
     online_members: int
+
+
+@dataclass
+class ContributorStats:
+    """Monthly contributor statistics for leaderboard"""
+    user_id: UUID
+    username: str
+    avatar: Optional[str]
+    total_points: int
+    posts_count: int
+    comments_count: int
+    likes_received: int
