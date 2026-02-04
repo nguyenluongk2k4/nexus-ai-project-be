@@ -1,0 +1,22 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Notification Service (WebSocket server)
+  # ---------------------------------------------------------------------------
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    container_name: nexusai-notifications
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET:-khe_nhat_fpt}
+      - DEBUG=True
+    networks:
+      - nexusai-network
+    restart: unless-stopped
+
+networks:
+  nexusai-network:
+    external: true

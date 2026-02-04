@@ -10,11 +10,13 @@ RUN apt-get update && apt-get install -y \
 
 # Copy backend requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # Pre-download AI models
 # Using the model name from settings.py: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')"
+RUN --mount=type=cache,target=/root/.cache/huggingface \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')"
 
 # Copy backend source
 COPY . .
