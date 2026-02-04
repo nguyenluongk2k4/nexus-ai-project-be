@@ -33,7 +33,11 @@ class MissionService:
                 )
                 await self.repository.create_user_mission(user_mission)
             
-            if user_mission.status == 'completed' and not mission.is_repeatable:
+            if user_mission.status == 'completed':
+                if not mission.is_repeatable:
+                    continue
+                # For repeatable missions, if already completed, we don't reset it back to in_progress 
+                # unless a new cycle is triggered. For now, just skip to avoid resetting a just-claimed mission.
                 continue
                 
             # Logic to update progress

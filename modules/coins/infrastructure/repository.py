@@ -157,6 +157,8 @@ class SQLAlchemyMissionRepository(MissionRepositoryPort):
             model.progress = user_mission.progress
             model.completed_at = user_mission.completed_at
             model.coins_earned = user_mission.coins_earned
+            self.session.add(model)
+            await self.session.flush()
         return user_mission
 
     async def create_user_mission(self, user_mission: UserMission) -> UserMission:
