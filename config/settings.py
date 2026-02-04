@@ -3,13 +3,19 @@
 
 import os
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
     # App
     APP_NAME: str = "NexusAI"
     DEBUG: bool = False
@@ -78,11 +84,6 @@ class Settings(BaseSettings):
         """Get Gemini API key from either env var"""
         return self.GOOGLE_API_KEY or self.GEMINI_API_KEY
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
-
 
 @lru_cache()
 def get_settings() -> Settings:

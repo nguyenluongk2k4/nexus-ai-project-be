@@ -3,13 +3,22 @@ import asyncio
 import redis.asyncio as redis
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import os
-import sys
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path to import config
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 from config.settings import settings
 from shared.security.jwt_service import JWTService
+
+logger.info(f"📡 [Notification] Initializing with REDIS_URL: {settings.REDIS_URL}")
 
 app = FastAPI(title="NexusAI Notification Service")
 
