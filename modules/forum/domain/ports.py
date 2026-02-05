@@ -2,7 +2,7 @@
 # Repository interfaces following hexagonal architecture
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import UUID
 
 from modules.forum.domain.entities import (
@@ -38,8 +38,13 @@ class ForumRepositoryPort(ABC):
         pass
     
     @abstractmethod
-    async def get_posts_by_category(self, category_id: UUID) -> List[ForumPost]:
-        """Get posts in a specific category"""
+    async def get_posts_by_category(self, category_id: UUID, sort_by: str = 'newest', search: str = None, page: int = 1, limit: int = 10, current_user_id: Optional[UUID] = None) -> Tuple[List[ForumPost], int]:
+        """Get posts by category with sorting, search, and pagination"""
+        pass
+    
+    @abstractmethod
+    async def get_related_posts(self, post_id: UUID, category_id: UUID, limit: int = 5) -> List[ForumPost]:
+        """Get related posts (same category, different post)"""
         pass
     
     @abstractmethod
