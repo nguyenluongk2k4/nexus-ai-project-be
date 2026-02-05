@@ -78,7 +78,11 @@ class UserRepositoryImpl(AuthRepositoryPort):
                 subscription_tier=user.subscription_tier,
                 subscription_expires_at=user.subscription_expires_at,
                 is_admin=user.is_admin,
-                is_active=user.is_active
+                is_active=user.is_active,
+                has_completed_tour=user.has_completed_tour,
+                has_completed_dashboard_tour=user.has_completed_dashboard_tour,
+                has_completed_skilltree_tour=user.has_completed_skilltree_tour,
+                has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour
             )
             db.add(model)
             await db.commit()
@@ -96,6 +100,32 @@ class UserRepositoryImpl(AuthRepositoryPort):
             
             if model:
                 model.last_login_at = datetime.now()
+                await db.commit()
+    
+    async def update_tour_status(self, user_id: UUID, status: bool, phase: str = "all") -> None:
+        """Update user's tour completion status"""
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(UserModel).where(UserModel.id == user_id)
+            )
+            model = result.scalar_one_or_none()
+            
+            if model:
+                if phase == "dashboard":
+                    model.has_completed_dashboard_tour = status
+                elif phase == "skilltree":
+                    model.has_completed_skilltree_tour = status
+                elif phase == "masterskilltree":
+                    model.has_completed_master_skilltree_tour = status
+                else:
+                    model.has_completed_tour = status
+                
+                # Automatic aggregation: If all sub-tours are done, mark the whole tour as done
+                if model.has_completed_dashboard_tour and \
+                   model.has_completed_skilltree_tour and \
+                   model.has_completed_master_skilltree_tour:
+                    model.has_completed_tour = True
+                    
                 await db.commit()
     
     async def update(self, user: User) -> User:
@@ -139,6 +169,10 @@ class UserRepositoryImpl(AuthRepositoryPort):
             subscription_expires_at=model.subscription_expires_at,
             is_admin=model.is_admin,
             is_active=model.is_active,
+            has_completed_tour=model.has_completed_tour,
+            has_completed_dashboard_tour=model.has_completed_dashboard_tour,
+            has_completed_skilltree_tour=model.has_completed_skilltree_tour,
+            has_completed_master_skilltree_tour=model.has_completed_master_skilltree_tour,
             created_at=model.created_at,
             updated_at=model.updated_at,
             last_login_at=model.last_login_at

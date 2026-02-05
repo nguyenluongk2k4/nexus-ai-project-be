@@ -7,10 +7,15 @@ from modules.auth.api.schemas import (
     RegisterRequest, LoginRequest, 
     UserResponse, AuthResponse
 )
-from modules.auth.providers import get_user_repository, get_jwt_service, get_password_service
+from modules.auth.providers import (
+    get_user_repository, get_jwt_service, get_password_service, get_complete_tour_use_case
+)
+from modules.auth.usecases.complete_tour import CompleteTourUseCase
 from modules.auth.domain.entities import User
 from modules.auth.api.deps import get_current_user
 from config.settings import settings
+from modules.coins.providers import get_mission_service
+from modules.coins.domain.services.mission_service import MissionService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -36,7 +41,10 @@ async def google_login():
 
 
 @router.get("/google/callback", summary="Google OAuth Callback")
-async def google_callback(code: str):
+async def google_callback(
+    code: str,
+    mission_service: MissionService = Depends(get_mission_service)
+):
     """Handle Google OAuth callback code"""
     import httpx
     
@@ -135,6 +143,17 @@ async def google_callback(code: str):
             )
             user = await user_repo.create(new_user)
             print(f"[DEBUG] User created: {user.id}")
+            
+            # Explicitly update last login for new user
+            await user_repo.update_last_login(user.id)
+            
+            # Trigger welcome mission for new Google users
+            try:
+                # Add a tiny delay or ensure session visibility
+                await mission_service.update_progress(user.id, "welcome", {"completed": True})
+                print(f"[DEBUG] Welcome mission triggered for {user.email}")
+            except Exception as mission_error:
+                print(f"[ERROR] Failed to trigger welcome mission for Google user: {mission_error}")
 
         # 4. Login (Generate Token)
         token = jwt_service.create_access_token(
@@ -146,6 +165,7 @@ async def google_callback(code: str):
         from fastapi.responses import RedirectResponse
         
         redirect_url = f"{settings.FRONTEND_URL}/auth/callback?token={token}"
+        print(f"[DEBUG] Redirecting to: {redirect_url}")
         return RedirectResponse(url=redirect_url)
         
     except Exception as e:
@@ -167,7 +187,10 @@ async def google_callback(code: str):
     status_code=status.HTTP_201_CREATED,
     summary="Đăng ký tài khoản mới"
 )
-async def register(data: RegisterRequest):
+async def register(
+    data: RegisterRequest,
+    mission_service: MissionService = Depends(get_mission_service)
+):
     """Register a new user account"""
     user_repo = get_user_repository()
     jwt_service = get_jwt_service()
@@ -199,6 +222,12 @@ async def register(data: RegisterRequest):
     
     created_user = await user_repo.create(user)
     
+    # Trigger welcome mission for new users
+    try:
+        await mission_service.update_progress(created_user.id, "welcome", {"completed": True})
+    except Exception as mission_error:
+        print(f"[ERROR] Failed to trigger welcome mission for new user: {mission_error}")
+    
     # Generate token
     token = jwt_service.create_access_token(
         user_id=str(created_user.id),
@@ -222,6 +251,10 @@ async def register(data: RegisterRequest):
             role=created_user.role,
             points=created_user.points,
             forum_rank=created_user.forum_rank,
+            has_completed_tour=created_user.has_completed_tour,
+            has_completed_dashboard_tour=created_user.has_completed_dashboard_tour,
+            has_completed_skilltree_tour=created_user.has_completed_skilltree_tour,
+            has_completed_master_skilltree_tour=created_user.has_completed_master_skilltree_tour,
             created_at=created_user.created_at,
             last_login_at=created_user.last_login_at
         )
@@ -287,6 +320,10 @@ async def login(data: LoginRequest):
             role=user.role,
             points=user.points,
             forum_rank=user.forum_rank,
+            has_completed_tour=user.has_completed_tour,
+            has_completed_dashboard_tour=user.has_completed_dashboard_tour,
+            has_completed_skilltree_tour=user.has_completed_skilltree_tour,
+            has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour,
             created_at=user.created_at,
             last_login_at=user.last_login_at
         )
@@ -314,6 +351,24 @@ async def get_me(user: User = Depends(get_current_user)):
         role=user.role,
         points=user.points,
         forum_rank=user.forum_rank,
+        has_completed_tour=user.has_completed_tour,
+        has_completed_dashboard_tour=user.has_completed_dashboard_tour,
+        has_completed_skilltree_tour=user.has_completed_skilltree_tour,
+        has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour,
         created_at=user.created_at,
         last_login_at=user.last_login_at
     )
+
+
+@router.post(
+    "/tour/complete",
+    summary="Đánh dấu đã hoàn thành tour guide"
+)
+async def complete_tour(
+    phase: str = "all",
+    user: User = Depends(get_current_user),
+    use_case: CompleteTourUseCase = Depends(get_complete_tour_use_case)
+):
+    """Mark onboarding tour as completed (optional phase parameter)"""
+    await use_case.execute(user.id, phase)
+    return {"status": "success", "message": f"Tour phase {phase} completed"}

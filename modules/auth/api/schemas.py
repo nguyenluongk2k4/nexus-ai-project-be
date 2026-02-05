@@ -40,6 +40,10 @@ class UserResponse(BaseModel):
     role: str = "member"
     points: int = 0
     forum_rank: str = "Member"
+    has_completed_tour: bool = False
+    has_completed_dashboard_tour: bool = False
+    has_completed_skilltree_tour: bool = False
+    has_completed_master_skilltree_tour: bool = False
     created_at: datetime
     last_login_at: Optional[datetime] = None
 
