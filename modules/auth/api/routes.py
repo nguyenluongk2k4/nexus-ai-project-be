@@ -293,6 +293,78 @@ async def login(data: LoginRequest):
     )
 
 
+@router.post(
+    "/admin/login",
+    response_model=AuthResponse,
+    summary="Đăng nhập cho Admin"
+)
+async def admin_login(data: LoginRequest):
+    """Login with email and password - Admin only"""
+    user_repo = get_user_repository()
+    jwt_service = get_jwt_service()
+    password_service = get_password_service()
+    
+    # Find user by email
+    user = await user_repo.get_by_email(data.email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+    
+    # Verify password
+    if not password_service.verify_password(data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+    
+    # ✅ Check if user is admin
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Admin privileges required."
+        )
+    
+    # Check if active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account is disabled"
+        )
+    
+    # Update last login
+    await user_repo.update_last_login(user.id)
+    
+    # Generate token
+    token = jwt_service.create_access_token(
+        user_id=str(user.id),
+        email=user.email
+    )
+    
+    return AuthResponse(
+        access_token=token,
+        token_type="bearer",
+        user=UserResponse(
+            id=str(user.id),
+            email=user.email,
+            username=user.username,
+            full_name=user.full_name,
+            avatar_url=user.avatar_url,
+            is_active=user.is_active,
+            balance=user.balance,
+            subscription_tier=user.subscription_tier,
+            subscription_expires_at=user.subscription_expires_at,
+            is_admin=user.is_admin,
+            role=user.role,
+            points=user.points,
+            forum_rank=user.forum_rank,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at
+        )
+    )
+
+
 @router.get(
     "/me",
     response_model=UserResponse,
