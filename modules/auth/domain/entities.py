@@ -24,6 +24,10 @@ class User:
     is_admin: bool = False
     is_active: bool = True
     google_id: Optional[str] = None
+    has_completed_tour: bool = False
+    has_completed_dashboard_tour: bool = False
+    has_completed_skilltree_tour: bool = False
+    has_completed_master_skilltree_tour: bool = False
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     last_login_at: Optional[datetime] = None

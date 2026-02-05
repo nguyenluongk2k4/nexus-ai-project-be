@@ -18,15 +18,7 @@ from modules.coins.api.schemas import (
 
 router = APIRouter(prefix="/coins", tags=["Coins"])
 
-# Dependency helpers
-def get_coins_service(db: AsyncSession = Depends(get_db)) -> CoinsService:
-    repo = SQLAlchemyCoinsRepository(db)
-    return CoinsService(repo)
-
-def get_mission_service(db: AsyncSession = Depends(get_db)) -> MissionService:
-    repo = SQLAlchemyMissionRepository(db)
-    coins_service = get_coins_service(db)
-    return MissionService(repo, coins_service)
+from modules.coins.providers import get_coins_service, get_mission_service
 
 @router.get("/balance", response_model=CoinsBalanceResponse)
 async def get_balance(

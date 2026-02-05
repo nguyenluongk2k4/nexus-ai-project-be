@@ -3,6 +3,7 @@
 from functools import lru_cache
 
 from modules.auth.infrastructure.repository import UserRepositoryImpl
+from modules.auth.usecases.complete_tour import CompleteTourUseCase
 from shared.security.jwt_service import JWTService, PasswordService
 
 
@@ -21,3 +22,8 @@ def get_password_service() -> PasswordService:
 def get_user_repository() -> UserRepositoryImpl:
     """Get user repository instance"""
     return UserRepositoryImpl()
+
+
+def get_complete_tour_use_case() -> CompleteTourUseCase:
+    """Get complete tour use case instance"""
+    return CompleteTourUseCase(get_user_repository())
