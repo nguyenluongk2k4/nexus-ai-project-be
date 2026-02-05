@@ -10,6 +10,8 @@ from fastapi.openapi.utils import get_openapi
 from modules.chat.api.routes import router as chat_router
 from modules.admin.api.routes import router as admin_router
 from modules.auth.api.routes import router as auth_router
+# User Management Router (Admin)
+from modules.user.api.routes import router as user_router
 # Skill Tree Router
 from modules.skill_tree.api.routes import router as skill_tree_router
 # Forum Router
@@ -20,6 +22,10 @@ from modules.profile.api.routes import router as profile_router
 from modules.purchase.api.routes import router as purchase_router
 # Subscription Router
 from modules.subscription.api.routes import router as subscription_router
+# Transaction Router (Admin)
+from modules.transaction.api.routes import router as transaction_router
+# Statistics Router (Admin)
+from modules.statistics.api.routes import router as statistics_router
 # Timeline Router
 from modules.timeline.api.routes import router as timeline_router
 # Quiz Router
@@ -135,6 +141,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(user_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 
 app.include_router(skill_tree_router, prefix="/api")
@@ -142,6 +149,8 @@ app.include_router(forum_router)  # Already has /api/forum prefix
 app.include_router(profile_router, prefix="/api")
 app.include_router(purchase_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
+app.include_router(transaction_router, prefix="/api")
+app.include_router(statistics_router, prefix="/api")
 app.include_router(timeline_router)  # Already has /api/timeline prefix
 app.include_router(quiz_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
