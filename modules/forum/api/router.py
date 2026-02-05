@@ -115,6 +115,9 @@ class ContributorStatsResponse(BaseModel):
 class CategoryPostsResponse(BaseModel):
     category: CategoryResponse
     posts: List[PostResponse]
+    total: int = 0
+    page: int = 1
+    limit: int = 10
 
 
 class ThreadDetailsResponse(BaseModel):
@@ -248,10 +251,17 @@ async def get_categories(db: AsyncSession = Depends(get_db)):
 @router.get("/categories/{category_id}/posts", response_model=CategoryPostsResponse)
 async def get_posts_by_category(
     category_id: str,
+    sort: str = Query("newest", regex="^(newest|popular|hot)$"),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     user_id: Optional[UUID] = Depends(get_current_user_id_optional)
 ):
-    """Get posts in a specific category"""
+    """
+    Get posts in a specific category with sorting, search and pagination.
+    Sort options: newest (default), popular, hot
+    """
     repo = ForumRepositoryImpl(db)
     
     # Try to find category by slug first, then by UUID
@@ -265,11 +275,21 @@ async def get_posts_by_category(
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
     
-    posts = await repo.get_posts_by_category(category.id, current_user_id=user_id)
+    posts, total_count = await repo.get_posts_by_category(
+        category_id=category.id, 
+        sort_by=sort, 
+        search=search, 
+        page=page, 
+        limit=limit,
+        current_user_id=user_id
+    )
     
     return CategoryPostsResponse(
         category=category_to_response(category),
-        posts=[post_to_response(p) for p in posts]
+        posts=[post_to_response(p, getattr(p, "is_liked", False)) for p in posts],
+        total=total_count,
+        page=page,
+        limit=limit
     )
 
 
@@ -332,6 +352,46 @@ async def get_thread_details(
             for c in comments
         ]
     )
+
+
+@router.get("/posts/{post_id}/related", response_model=List[PostResponse])
+async def get_related_posts(
+    post_id: str,
+    category_id: Optional[str] = Query(None),
+    limit: int = Query(default=5, le=10),
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+):
+    """
+    Get related posts.
+    If category_id is provided, use it.
+    Otherwise, fetch the post first to get its category.
+    """
+    repo = ForumRepositoryImpl(db)
+    
+    # Ensure IDs are UUIDs
+    try:
+        post_uuid = UUID(post_id)
+        category_uuid = UUID(category_id) if category_id else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+
+    # If category_id is missing, we must fetch the post to know its category
+    if not category_uuid:
+        post = await repo.get_post_by_id(post_uuid)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        category_uuid = post.category_id
+
+    # Fetch related
+    posts = await repo.get_related_posts(
+        post_id=post_uuid,
+        category_id=category_uuid,
+        limit=limit,
+        current_user_id=user_id
+    )
+    
+    return [post_to_response(p, getattr(p, "is_liked", False)) for p in posts]
 
 
 @router.get("/stats", response_model=StatsResponse)

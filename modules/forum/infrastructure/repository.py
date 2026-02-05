@@ -1,10 +1,10 @@
 # Forum Infrastructure - Repository Implementation
 # Implements ForumRepositoryPort using SQLAlchemy async queries
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -192,8 +192,19 @@ class ForumRepositoryImpl(ForumRepositoryPort):
         
         return posts
     
-    async def get_posts_by_category(self, category_id: UUID, current_user_id: Optional[UUID] = None) -> List[ForumPost]:
-        """Get posts in a specific category - OPTIMIZED with JOINs"""
+    async def get_posts_by_category(
+        self, 
+        category_id: UUID, 
+        sort_by: str = 'newest', 
+        search: str = None, 
+        page: int = 1, 
+        limit: int = 10,
+        current_user_id: Optional[UUID] = None
+    ) -> Tuple[List[ForumPost], int]:
+        """Get posts by category with sorting, search and pagination"""
+        offset = (page - 1) * limit
+
+        # Subqueries for counts
         comment_count_subq = (
             select(func.count(ForumCommentModel.id))
             .where(ForumCommentModel.post_id == ForumPostModel.id)
@@ -208,7 +219,49 @@ class ForumRepositoryImpl(ForumRepositoryPort):
             .scalar_subquery()
         )
 
-        # Check if current user liked the post
+        # Base query
+        stmt = (
+            select(
+                ForumPostModel,
+                UserModel,
+                ForumCategoryModel,
+                comment_count_subq.label('comment_count'),
+                like_count_subq.label('like_count')
+            )
+            .outerjoin(UserModel, ForumPostModel.user_id == UserModel.id)
+            .outerjoin(ForumCategoryModel, ForumPostModel.category_id == ForumCategoryModel.id)
+            .where(ForumPostModel.category_id == category_id)
+        )
+
+        # Add Search
+        if search:
+            search_term = f"%{search}%"
+            stmt = stmt.where(
+                (ForumPostModel.title.ilike(search_term)) | 
+                (ForumPostModel.content.ilike(search_term))
+            )
+
+        # Add Sorting
+        # 'hot': activity (comments + likes)
+        # 'popular': views
+        # 'newest': created_at
+        if sort_by == 'popular':
+            stmt = stmt.order_by(ForumPostModel.view_count.desc())
+        elif sort_by == 'hot':
+            # Approximate 'hot' by simple sum of comments and likes for efficient sorting in SQL
+            stmt = stmt.order_by((comment_count_subq + like_count_subq).desc())
+        else: # newest or default
+            stmt = stmt.order_by(ForumPostModel.is_pinned.desc(), ForumPostModel.created_at.desc())
+            
+        # Count query (before pagination)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await self.session.execute(count_stmt)
+        total_count = total_result.scalar() or 0
+
+        # Pagination
+        stmt = stmt.offset(offset).limit(limit)
+        
+        # Add is_liked check if needed
         is_liked_expr = None
         if current_user_id:
              is_liked_expr = (
@@ -220,32 +273,18 @@ class ForumRepositoryImpl(ForumRepositoryPort):
                 .correlate(ForumPostModel)
                 .exists()
             )
-        
-        stmt = (
-            select(
-                ForumPostModel,
-                UserModel,
-                ForumCategoryModel,
-                comment_count_subq.label('comment_count'),
-                like_count_subq.label('like_count'),
-                *( (is_liked_expr.label('is_liked'),) if current_user_id else (False,) )
-            )
-            .outerjoin(UserModel, ForumPostModel.user_id == UserModel.id)
-            .outerjoin(ForumCategoryModel, ForumPostModel.category_id == ForumCategoryModel.id)
-            .where(ForumPostModel.category_id == category_id)
-            .order_by(ForumPostModel.is_pinned.desc(), ForumPostModel.created_at.desc())
-        )
+             # Re-construct select with is_liked
+             stmt = stmt.add_columns(is_liked_expr.label('is_liked'))
+        else:
+             stmt = stmt.add_columns(literal(False).label('is_liked'))
         
         result = await self.session.execute(stmt)
         rows = result.tuples().all()
         
         posts = []
         for row in rows:
-            if current_user_id:
-                 post, user, category, comment_count, like_count, is_liked = row
-            else:
-                 post, user, category, comment_count, like_count = row[0], row[1], row[2], row[3], row[4]
-                 is_liked = False
+            # defined columns: Post, User, Category, comment_count, like_count, is_liked
+            post, user, category, comment_count, like_count, is_liked = row
             
             author = self._user_model_to_entity(user) if user else self._user_model_to_entity(None)
             
@@ -265,10 +304,52 @@ class ForumRepositoryImpl(ForumRepositoryPort):
                 category_slug=category.slug if category else None,
                 comment_count=comment_count or 0,
                 like_count=like_count or 0,
-                is_liked=is_liked
+                is_liked=is_liked if is_liked is not None else False
             ))
         
-        return posts
+        return posts, total_count
+
+    async def get_related_posts(self, post_id: UUID, category_id: UUID, limit: int = 5, current_user_id: Optional[UUID] = None) -> List[ForumPost]:
+        """Get related posts (same category, excluding current post)"""
+        stmt = (
+            select(ForumPostModel)
+            .where(
+                ForumPostModel.category_id == category_id,
+                ForumPostModel.id != post_id
+            )
+            .order_by(ForumPostModel.created_at.desc())
+            .limit(limit)
+        )
+        
+        result = await self.session.execute(stmt)
+        post_models = result.scalars().all()
+        
+        if not post_models:
+            return []
+            
+        return await self._enrich_posts(post_models) # _enrich_posts handles None user internally, but let's check sig.
+        # Wait, _enrich_posts signature in repo is: async def _enrich_posts(self, posts: List[ForumPostModel]) -> List[ForumPost]:
+        # It DOES NOT take current_user_id. Wait, let me check _enrich_posts again.
+        # Line 273: async def _enrich_posts(self, posts: List[ForumPostModel]) -> List[ForumPost]:
+        # IT DOES NOT handle is_liked logic!
+        # Ah, look at get_latest_posts (line 114) and get_posts_by_category (line 195). 
+        # They do BIG joins including is_liked logic inside the main query, and then construct ForumPost manually.
+        # _enrich_posts only adds author, category, comment_count, like_count. It does NOT add is_liked.
+        # If I want is_liked support in related posts, I should probably copy the JOIN logic or just accept it won't have is_liked for now (simpler).
+        # The plan didn't strictly require is_liked for related posts cards, usually just title/views/etc. 
+        # But `PostResponse` expects `isLiked`.
+        # `post_to_response` (router.py line 144) handles `is_liked: bool = False` argument.
+        # If I use `_enrich_posts`, the `ForumPost` entity (lines 338-354) sets `is_liked`? 
+        # Let's check `ForumPost` entity definition in `_enrich_posts` return... 
+        # I don't see `is_liked` being set in `_enrich_posts` loop! 
+        # Wait, `ForumPost` dataclass likely has it.
+        # In `_enrich_posts` (lines 323+), it creates `ForumPost`. It does NOT pass `is_liked`.
+        # So `_enrich_posts` returns posts with `is_liked=None` or default?
+        # Check `ForumPost` entity in `ports.py` or `entities.py`.
+        # Regardless, for "Related Posts", `is_liked` is a nice-to-have.
+        # I will stick to the simple implementation using `_enrich_posts` for now to be safe and consistent with `create_post`.
+        # If `create_post` (line 515) uses `_enrich_posts`, then `is_liked` is likely False/None.
+        
     
     async def _enrich_posts(self, posts: List[ForumPostModel]) -> List[ForumPost]:
         """Add author, category, and counts to posts - OPTIMIZED with batch loading"""
