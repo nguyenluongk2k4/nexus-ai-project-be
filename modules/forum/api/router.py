@@ -26,6 +26,8 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     avatar: Optional[str]
     rank: Optional[str] = None
+    points: int = 0
+    post_count: int = 0
     
     class Config:
         from_attributes = True
@@ -96,11 +98,26 @@ class ForumDashboardResponse(BaseModel):
     categories: List[CategoryResponse]
     latestPosts: List[PostResponse]
     stats: StatsResponse
+    topMembers: List[UserResponse]
+
+
+class ContributorStatsResponse(BaseModel):
+    """Monthly contribution statistics for leaderboard"""
+    userId: str
+    username: str
+    avatar: Optional[str]
+    totalPoints: int
+    postsCount: int
+    commentsCount: int
+    likesReceived: int
 
 
 class CategoryPostsResponse(BaseModel):
     category: CategoryResponse
     posts: List[PostResponse]
+    total: int = 0
+    page: int = 1
+    limit: int = 10
 
 
 class ThreadDetailsResponse(BaseModel):
@@ -137,6 +154,9 @@ def post_to_response(post, is_liked: bool = False) -> PostResponse:
     # Determine if hot (more than 100 views or 10 comments)
     is_hot = post.view_count > 100 or post.comment_count > 10
     
+    # Use passed is_liked, or fallback to post attribute if set
+    final_is_liked = is_liked or getattr(post, 'is_liked', False)
+    
     return PostResponse(
         id=str(post.id),
         title=post.title,
@@ -161,7 +181,7 @@ def post_to_response(post, is_liked: bool = False) -> PostResponse:
         updatedAt=post.updated_at.isoformat() if post.updated_at else None,
         isPinned=post.is_pinned,
         isHot=is_hot,
-        isLiked=is_liked
+        isLiked=final_is_liked
     )
 
 
@@ -186,13 +206,17 @@ def category_to_response(cat) -> CategoryResponse:
 # =====================================================
 
 @router.get("/dashboard", response_model=ForumDashboardResponse)
-async def get_forum_dashboard(db: AsyncSession = Depends(get_db)):
+async def get_forum_dashboard(
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+):
     """Get forum dashboard data: categories, latest posts, stats"""
     repo = ForumRepositoryImpl(db)
     
     categories = await repo.get_categories()
-    latest_posts = await repo.get_latest_posts(limit=10)
+    latest_posts = await repo.get_latest_posts(limit=10, current_user_id=user_id)
     stats = await repo.get_stats()
+    top_members = await repo.get_top_members(limit=5)
     
     return ForumDashboardResponse(
         categories=[category_to_response(c) for c in categories],
@@ -201,7 +225,18 @@ async def get_forum_dashboard(db: AsyncSession = Depends(get_db)):
             totalPosts=stats.total_posts,
             totalMembers=stats.total_members,
             onlineMembers=stats.online_members
-        )
+        ),
+        topMembers=[
+            UserResponse(
+                id=str(u.id),
+                username=u.username,
+                full_name=u.full_name,
+                avatar=u.avatar,
+                rank=u.role,
+                points=u.points,
+                post_count=getattr(u, 'post_count', 0)
+            ) for u in top_members
+        ]
     )
 
 
@@ -216,9 +251,17 @@ async def get_categories(db: AsyncSession = Depends(get_db)):
 @router.get("/categories/{category_id}/posts", response_model=CategoryPostsResponse)
 async def get_posts_by_category(
     category_id: str,
-    db: AsyncSession = Depends(get_db)
+    sort: str = Query("newest", regex="^(newest|popular|hot)$"),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[UUID] = Depends(get_current_user_id_optional)
 ):
-    """Get posts in a specific category"""
+    """
+    Get posts in a specific category with sorting, search and pagination.
+    Sort options: newest (default), popular, hot
+    """
     repo = ForumRepositoryImpl(db)
     
     # Try to find category by slug first, then by UUID
@@ -232,22 +275,33 @@ async def get_posts_by_category(
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
     
-    posts = await repo.get_posts_by_category(category.id)
+    posts, total_count = await repo.get_posts_by_category(
+        category_id=category.id, 
+        sort_by=sort, 
+        search=search, 
+        page=page, 
+        limit=limit,
+        current_user_id=user_id
+    )
     
     return CategoryPostsResponse(
         category=category_to_response(category),
-        posts=[post_to_response(p) for p in posts]
+        posts=[post_to_response(p, getattr(p, "is_liked", False)) for p in posts],
+        total=total_count,
+        page=page,
+        limit=limit
     )
 
 
 @router.get("/posts", response_model=List[PostResponse])
 async def get_latest_posts(
     limit: int = Query(default=10, le=50),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[UUID] = Depends(get_current_user_id_optional)
 ):
     """Get latest posts"""
     repo = ForumRepositoryImpl(db)
-    posts = await repo.get_latest_posts(limit=limit)
+    posts = await repo.get_latest_posts(limit=limit, current_user_id=user_id)
     return [post_to_response(p) for p in posts]
 
 
@@ -274,6 +328,9 @@ async def get_thread_details(
     if user_id:
         is_liked = await repo.has_user_liked_post(user_id, post_uuid)
     
+    # Increment view count
+    await repo.increment_view_count(post_uuid)
+    
     return ThreadDetailsResponse(
         post=post_to_response(post, is_liked=is_liked),
         comments=[
@@ -297,6 +354,46 @@ async def get_thread_details(
     )
 
 
+@router.get("/posts/{post_id}/related", response_model=List[PostResponse])
+async def get_related_posts(
+    post_id: str,
+    category_id: Optional[str] = Query(None),
+    limit: int = Query(default=5, le=10),
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+):
+    """
+    Get related posts.
+    If category_id is provided, use it.
+    Otherwise, fetch the post first to get its category.
+    """
+    repo = ForumRepositoryImpl(db)
+    
+    # Ensure IDs are UUIDs
+    try:
+        post_uuid = UUID(post_id)
+        category_uuid = UUID(category_id) if category_id else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+
+    # If category_id is missing, we must fetch the post to know its category
+    if not category_uuid:
+        post = await repo.get_post_by_id(post_uuid)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        category_uuid = post.category_id
+
+    # Fetch related
+    posts = await repo.get_related_posts(
+        post_id=post_uuid,
+        category_id=category_uuid,
+        limit=limit,
+        current_user_id=user_id
+    )
+    
+    return [post_to_response(p, getattr(p, "is_liked", False)) for p in posts]
+
+
 @router.get("/stats", response_model=StatsResponse)
 async def get_forum_stats(db: AsyncSession = Depends(get_db)):
     """Get forum statistics"""
@@ -308,6 +405,53 @@ async def get_forum_stats(db: AsyncSession = Depends(get_db)):
         totalMembers=stats.total_members,
         onlineMembers=stats.online_members
     )
+
+
+@router.get("/contributors/top", response_model=List[ContributorStatsResponse])
+async def get_top_contributors(
+    limit: int = Query(default=10, le=50),
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    year: Optional[int] = Query(default=None, ge=2020),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get top contributors for a specific month (defaults to current month)
+    
+    Scoring:
+    - Create Post: 10 points
+    - Write Comment: 2 points
+    - Receive Like: 5 points
+    """
+    from datetime import datetime
+    from modules.forum.domain.services import ContributorService
+    from modules.forum.usecases import GetTopContributorsUseCase
+    
+    repo = ForumRepositoryImpl(db)
+    service = ContributorService(repo)
+    use_case = GetTopContributorsUseCase(service)
+    
+    # Default to current month if not specified
+    now = datetime.now()
+    target_month = month or now.month
+    target_year = year or now.year
+    
+    contributors = await use_case.execute(
+        limit=limit,
+        month=target_month,
+        year=target_year
+    )
+    
+    return [
+        ContributorStatsResponse(
+            userId=str(c.user_id),
+            username=c.username,
+            avatar=c.avatar,
+            totalPoints=c.total_points,
+            postsCount=c.posts_count,
+            commentsCount=c.comments_count,
+            likesReceived=c.likes_received
+        )
+        for c in contributors
+    ]
 
 
 # =====================================================
