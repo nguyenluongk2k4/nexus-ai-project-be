@@ -55,18 +55,28 @@ class ChatRepositoryImpl(ChatRepositoryPort):
             await db.commit()
             return result.rowcount > 0
     
-    async def update_session_context(self, session_id: UUID, context_data: dict) -> bool:
-        """Update session context data (e.g. skill tree)"""
+    async def update_session_status(self, session_id: UUID, status: str = 'idle', request_id: str = None) -> bool:
+        """Update session status and request_id"""
         async with async_session_maker() as db:
             from sqlalchemy import update
+            from datetime import datetime
+            
+            values = {
+                'status': status,
+                'updated_at': datetime.utcnow()
+            }
+            if request_id:
+                values['request_id'] = request_id
+            
             stmt = (
                 update(ChatSessionModel)
                 .where(ChatSessionModel.id == session_id)
-                .values(context_data=context_data)
+                .values(**values)
             )
             result = await db.execute(stmt)
             await db.commit()
             return result.rowcount > 0
+    
     
     async def get_user_sessions(self, user_id: UUID) -> List[ChatSession]:
         """Get all sessions for a user"""

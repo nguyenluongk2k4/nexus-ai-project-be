@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # Celery Worker for background tasks
+  # Connects to existing services from docker-compose.yml (db, redis, chromadb on same network)
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery_worker
+    container_name: nexusai-celery-worker
+    command: celery -A config.celery_config worker --loglevel=info --concurrency=4
+    environment:
+      REDIS_URL: redis://nexusai-redis:6379/0
+      CELERY_BROKER_URL: redis://nexusai-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nexusai-redis:6379/1
+      DATABASE_URL: postgresql+asyncpg://nexusai:nexusai_password@nexusai-db:5432/nexusai
+      CHROMA_MODE: server
+      CHROMA_HOST: nexusai-chromadb
+      CHROMA_PORT: 8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LOG_LEVEL: info
+    volumes:
+      - ./:/app  # Mount code for development
+    networks:
+      - nexusai-network
+    restart: unless-stopped
+
+  # Celery Flower for monitoring
+  flower:
+    image: mher/flower:2.0
+    container_name: nexusai-flower
+    command: celery -A config.celery_config flower --port=5555 --broker=redis://nexusai-redis:6379/0
+    ports:
+      - "5555:5555"
+    environment:
+      CELERY_BROKER_URL: redis://nexusai-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nexusai-redis:6379/1
+    networks:
+      - nexusai-network
+    restart: unless-stopped
+
+networks:
+  nexusai-network:
+    name: nexusai-network
+    driver: bridge
+    external: true
+
+

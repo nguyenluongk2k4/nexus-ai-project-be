@@ -20,6 +20,8 @@ class ChatSessionModel(Base):
     user_id: Mapped[Optional[uuid_module.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(255))
     context_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="idle")  # idle, rendering
+    request_id: Mapped[Optional[uuid_module.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
     

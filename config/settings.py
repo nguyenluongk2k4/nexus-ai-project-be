@@ -73,7 +73,15 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_CHAT_DB: int = 2  # Separate DB for chat events
     NOTIFICATION_CHANNEL: str = "notifications"
+    
+    # Celery & Task Queue
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_TASK_TIMEOUT: int = 300  # 5 minutes
+    CELERY_TASK_TRACK_STARTED: bool = True
+    CELERY_TASK_SEND_SENT_EVENT: bool = True
     
     # Coin Costs
     COIN_COST_AI_CHAT: int = 5

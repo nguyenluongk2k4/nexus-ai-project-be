@@ -1,0 +1,39 @@
+# Celery Worker Requirements
+# Stripped down version for Celery worker container
+# Used by: docker-compose.worker.yml
+# Versions matched with requirements.txt for consistency
+
+# Core Celery (kombu is auto-installed as dependency)
+celery==5.3.6
+redis>=5.0.0
+
+# Database
+sqlalchemy==2.0.45
+asyncpg==0.31.0
+greenlet==3.3.0
+
+# Models & Config
+pydantic==2.12.5
+pydantic-settings==2.12.0
+python-dotenv==1.2.1
+PyJWT==2.10.1
+
+# LLM & Vector Store
+google-generativeai==0.8.6
+chromadb==1.4.0
+sentence-transformers==5.2.0
+
+# Utilities
+aiofiles==25.1.0
+backoff==2.2.1
+httpx==0.28.1
+requests==2.32.5
+orjson==3.11.5
+
+# Logging
+coloredlogs==15.0.1
+humanfriendly==10.0
+
+# Type hints
+typing-extensions==4.15.0
+annotated-types==0.7.0
