@@ -215,12 +215,8 @@ class SkillTreeRepository(SkillTreePort):
                 # TODO: Implement full user tree fetching with same limits
                 pass
             
-            # 2. Fallback: Return the Default Template Tree
-            stmt_template = select(SkillTreeTemplateModel).where(SkillTreeTemplateModel.is_active == True).limit(1)
-            result_template = await session.execute(stmt_template)
-            template = result_template.scalar_one_or_none()
-            
-            if not template:
+            # 2. Return None if no user tree found (Do NOT fallback to default template)
+            if not user_tree:
                 return None
             
             # === OPTIMIZED: Find root nodes first, then get only first 2 levels ===

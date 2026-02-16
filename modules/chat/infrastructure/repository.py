@@ -37,6 +37,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                 id=_to_uuid(model.id),
                 user_id=_to_uuid(model.user_id) if model.user_id else None,
                 title=model.title,
+                status=model.status, # Added status
                 context_data=model.context_data,
                 created_at=model.created_at,
                 updated_at=model.updated_at
@@ -77,6 +78,25 @@ class ChatRepositoryImpl(ChatRepositoryPort):
             await db.commit()
             return result.rowcount > 0
     
+    async def update_context_and_status(self, session_id: UUID, context_data: dict, status: str = 'idle') -> bool:
+        """Update both context_data and status in single transaction to avoid connection conflicts"""
+        async with async_session_maker() as db:
+            from sqlalchemy import update
+            from datetime import datetime
+            
+            stmt = (
+                update(ChatSessionModel)
+                .where(ChatSessionModel.id == session_id)
+                .values(
+                    context_data=context_data,
+                    status=status,
+                    updated_at=datetime.utcnow()
+                )
+            )
+            result = await db.execute(stmt)
+            await db.commit()
+            return result.rowcount > 0
+
     
     async def get_user_sessions(self, user_id: UUID) -> List[ChatSession]:
         """Get all sessions for a user"""
@@ -93,6 +113,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                     id=_to_uuid(m.id),
                     user_id=_to_uuid(m.user_id) if m.user_id else None,
                     title=m.title,
+                    status=m.status, # Added status
                     context_data=m.context_data,
                     created_at=m.created_at,
                     updated_at=m.updated_at
@@ -103,6 +124,10 @@ class ChatRepositoryImpl(ChatRepositoryPort):
     async def create_session(self, session: ChatSession) -> ChatSession:
         """Create new chat session"""
         async with async_session_maker() as db:
+            # DEBUG LOG
+            from shared.logger import get_logger
+            logger = get_logger(__name__, "SYSTEM")
+            logger.info(f"💾 [Repo] Creating session {session.id}, user_id: {session.user_id} (Type: {type(session.user_id)})")
             model = ChatSessionModel(
                 id=session.id if session.id else uuid4(),
                 user_id=session.user_id if session.user_id else None,
@@ -116,6 +141,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                 id=_to_uuid(model.id),
                 user_id=_to_uuid(model.user_id) if model.user_id else None,
                 title=model.title,
+                status=model.status, # Added status
                 created_at=model.created_at,
                 updated_at=model.updated_at
             )
@@ -188,6 +214,7 @@ class ChatRepositoryImpl(ChatRepositoryPort):
                     id=_to_uuid(m.id),
                     user_id=_to_uuid(m.user_id) if m.user_id else None,
                     title=m.title,
+                    status=m.status, # Added status
                     context_data=m.context_data,
                     created_at=m.created_at,
                     updated_at=m.updated_at

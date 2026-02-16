@@ -66,7 +66,7 @@ async def send_message(
     session_id = data.session_id or str(uuid4())
     
     if not data.session_id:
-        new_session = ChatSession(id=UUID(session_id), title=data.text[:50])
+        new_session = ChatSession(id=UUID(session_id), title=data.text[:50], user_id=UUID(user_id))
         await chatbot.chat_repo.create_session(new_session)
     
     # Coins Integration: Deduct 5 coins per message
@@ -142,7 +142,7 @@ async def send_message_async(
         if not data.session_id:
             from modules.chat.domain.entities import ChatSession
             chatbot = get_chatbot_service()
-            new_session = ChatSession(id=UUID(session_id), title=data.text[:50])
+            new_session = ChatSession(id=UUID(session_id), title=data.text[:50], user_id=UUID(user_id))
             await chatbot.chat_repo.create_session(new_session)
         
         # Coins Integration: Deduct 5 coins per message
@@ -231,7 +231,7 @@ async def send_message_async_stream(
             if not data.session_id:
                 from modules.chat.domain.entities import ChatSession
                 chatbot = get_chatbot_service()
-                new_session = ChatSession(id=UUID(session_id), title=data.text[:50])
+                new_session = ChatSession(id=UUID(session_id), title=data.text[:50], user_id=UUID(user_id))
                 await chatbot.chat_repo.create_session(new_session)
             
             # Coins Integration: Deduct 5 coins per message
@@ -359,6 +359,13 @@ async def stream_session_progress(
     async def stream_progress():
         try:
             from services.redis.event_manager import redis_event_manager
+            from modules.chat.providers import get_chatbot_service
+            
+            chatbot = None
+            try:
+                chatbot = get_chatbot_service()
+            except Exception as e:
+                logger.error(f"❌ [Stream] Failed to get chatbot service: {e}")
             
             logger.info(f"📡 [Stream] Starting progress stream for session: {session_id}")
             
@@ -380,6 +387,17 @@ async def stream_session_progress(
                         except:
                             pass
                     
+                    # Fix: If cache is missing (expired), check DB status
+                    # If DB says idle, we should complete immediately
+                    if not cache_value and chatbot:
+                        session_db = await chatbot.chat_repo.get_session(UUID(session_id))
+                        if session_db and session_db.status == "idle":
+                            # DB says done, but cache is gone -> Completed
+                            yield f"data: {json.dumps({'type': 'completed', 'progress': 100, 'tree': session_db.context_data.get('tree_nodes') if session_db.context_data else None})}\n\n"
+                            logger.info(f"✅ [Stream] Completed (recovered from DB) for session: {session_id}")
+                            completed = True
+                            break
+
                     current_progress = progress_data.get("progress", 0)
                     current_status = progress_data.get("status", "rendering")
                     step = progress_data.get("step", "")
@@ -605,6 +623,13 @@ async def get_session(
         status = "rendering" if has_active_progress else "idle"
         
         # Build response
+        # Extract only tree_nodes from context_data for FE
+        context_response = None
+        if session.context_data and "tree_nodes" in session.context_data:
+            context_response = {
+                "tree_nodes": session.context_data["tree_nodes"]
+            }
+        
         return {
             "session_id": session_id,
             "title": session.title,
@@ -620,7 +645,7 @@ async def get_session(
                 }
                 for m in messages
             ],
-            "context_data": session.context_data,
+            "context_data": context_response,  # Only tree_nodes, not full context
             "created_at": session.created_at,
             "updated_at": session.updated_at
         }
@@ -792,12 +817,17 @@ async def websocket_chat(websocket: WebSocket):
                     user_id = None
                     if token:
                         try:
+                            logger.info(f"🔍 [WS] Processing token: type={type(token)}, len={len(token)}")
+                            # logger.info(f"🔍 [WS] Token content: {token[:20]}...") 
+                            
                             jwt_service = get_jwt_service()
                             uid_str = jwt_service.get_user_id_from_token(token)
+                            
                             if uid_str:
                                 user_id = UUID(uid_str)
+                                logger.info(f"🔑 [WS] User authenticated: {user_id}")
                         except Exception as e:
-                            logger.warning(f"⚠️ [WS] Invalid token: {e}")
+                            logger.exception(f"⚠️ [WS] Token processing failed: {e}")
                     
                     # If no session_id, create session IMMEDIATELY
                     if not session_id:
@@ -923,7 +953,7 @@ async def websocket_chat(websocket: WebSocket):
                     user_id = None
                     if token:
                         try:
-                            from modules.auth.providers import get_jwt_service
+
                             jwt_service = get_jwt_service()
                             uid_str = jwt_service.get_user_id_from_token(token)
                             if uid_str:

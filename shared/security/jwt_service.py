@@ -1,5 +1,6 @@
 # Auth Module - JWT Service
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
@@ -8,6 +9,9 @@ import jwt
 from passlib.context import CryptContext
 
 from config.settings import settings
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -37,28 +41,28 @@ class JWTService:
     def decode_token(self, token: str) -> Optional[dict]:
         """Decode and verify JWT token"""
         try:
-            print(f"[JWT] Decoding token with secret: {self.secret_key[:10]}...")
-            print(f"[JWT] Algorithm: {self.algorithm}")
-            print(f"[JWT] Token (first 50): {token[:50]}...")
+            # logger.debug(f"[JWT] Decoding token with secret: {self.secret_key[:10]}...")
+            # logger.debug(f"[JWT] Algorithm: {self.algorithm}")
+            
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
-            print(f"[JWT] Successfully decoded. Payload: {payload}")
+            # logger.debug(f"[JWT] Successfully decoded. Payload: {payload}")
             return payload
         except jwt.ExpiredSignatureError as e:
-            print(f"[JWT] Token expired: {e}")
+            logger.warning(f"[JWT] Token expired: {e}")
             return None
         except jwt.InvalidTokenError as e:
-            print(f"[JWT] Invalid token: {e}")
+            logger.warning(f"[JWT] Invalid token: {e}")
             return None
     
     def get_user_id_from_token(self, token: str) -> Optional[str]:
         """Extract user_id from token"""
-        print(f"[JWT] Getting user_id from token...")
+        # logger.debug(f"[JWT] Getting user_id from token...")
         payload = self.decode_token(token)
         if payload:
             user_id = payload.get("sub")
-            print(f"[JWT] Extracted user_id: {user_id}")
+            # logger.debug(f"[JWT] Extracted user_id: {user_id}")
             return user_id
-        print(f"[JWT] Failed to get user_id (payload is None)")
+        logger.warning(f"[JWT] Failed to get user_id (payload is None)")
         return None
 
 

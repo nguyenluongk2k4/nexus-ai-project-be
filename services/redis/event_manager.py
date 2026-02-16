@@ -164,10 +164,16 @@ class RedisEventManager:
     ) -> int:
         """Publish tree ready event"""
         channel = await self.get_channel_pattern(session_id, "ready")
+        
+        # Format tree for FE: rename tree_nodes to nodes and remove extra fields
+        formatted_tree = {
+            "nodes": tree_data.get("tree_nodes", [])
+        }
+        
         event = {
             "session_id": session_id,
             "status": "idle",
-            "tree": tree_data,
+            "tree": formatted_tree,  # FE expects tree.nodes
             "type": "tree_ready"
         }
         return await self.publish(channel, event)

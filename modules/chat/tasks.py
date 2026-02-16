@@ -11,7 +11,6 @@ from services.redis.event_manager import redis_event_manager
 from config.settings import settings
 from modules.chat.services.gemini_intent_service import GeminiIntentService
 from modules.chat.services.rag_service import RAGService
-from modules.chat.services.tree_renderer_service import TreeRenderService
 from modules.chat.infrastructure.repository import ChatRepositoryImpl
 from sqlalchemy import update
 from modules.chat.infrastructure.models import ChatSessionModel
@@ -20,10 +19,35 @@ from celery.signals import worker_ready, worker_process_init
 
 logger = logging.getLogger(__name__)
 
+
+
+def _convert_tree_nodes_to_dict(tree_nodes: List, intent: str) -> dict:
+    """Convert List[TreeNodeResult] to tree dict format for frontend"""
+    nodes = []
+    
+    for node in tree_nodes:
+        nodes.append({
+            "id": node.id,
+            "icon": node.icon,
+            "name": node.name,
+            "type": node.type,
+            "level": node.level,
+            "filled": True,  # All nodes from SkillTreeQueryService are considered filled
+            "metadata": node.metadata,
+            "parentId": node.parent_id,
+            "description": node.description or "",
+            "original_node_id": getattr(node, "original_node_id", node.id)  # Use original ID if available
+        })
+    
+    return {
+        "tree_nodes": nodes
+    }
+
+
+
 # Global cache for pre-loaded services (per worker process)
 _worker_cache = {
     "rag_service": None,
-    "tree_service": None,
     "initialized": False
 }
 
@@ -31,35 +55,51 @@ _worker_cache = {
 def _init_worker_cache():
     """Initialize cached services in this worker process"""
     global _worker_cache
-    
     if _worker_cache["initialized"]:
-        return  # Already initialized
-    
+        return
     logger.info("\n⏳ Initializing worker cache: Loading RAG service...")
-    
     try:
-        # Pre-load RAG service
         _worker_cache["rag_service"] = RAGService()
         logger.info("✅ RAG service loaded: Embedding model cached in this worker")
     except Exception as e:
         logger.warning(f"⚠️ Failed to load RAG service: {e}")
-    
-    try:
-        # Pre-load Tree service
-        _worker_cache["tree_service"] = TreeRenderService()
-        logger.info("✅ Tree service loaded in this worker")
-    except Exception as e:
-        logger.warning(f"⚠️ Failed to load Tree service: {e}")
-    
     _worker_cache["initialized"] = True
     logger.info("🎯 Worker cache ready!\n")
+
+
+# Persistent event loop for this worker process
+# All async tasks reuse this loop → connections stay bound to same loop → no InterfaceError
+_worker_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    """Get or create the persistent worker event loop"""
+    global _worker_loop
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+        logger.info("🔄 Created new persistent event loop for worker")
+    return _worker_loop
 
 
 @worker_process_init.connect
 def setup_worker_process(sender, **kwargs):
     """Initialize cache when worker process starts (runs in each child worker)"""
     logger.info("\n🚀 Worker process starting - Pre-loading services...")
+    
+    # Step 1: Create persistent event loop for this worker
+    loop = _get_worker_loop()
+    
+    # Step 2: Dispose inherited engine to force fresh connections on this loop
+    from shared.database.connection import engine
+    try:
+        loop.run_until_complete(engine.dispose())
+        logger.info("✅ Database engine disposed (clean connection pool for worker)")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to dispose engine: {e}")
+
     _init_worker_cache()
+    logger.info("🎯 Worker process ready with persistent event loop!\n")
 
 
 @worker_ready.connect
@@ -114,43 +154,20 @@ def process_chat_intent(
             "error": str (if failed)
         }
     """
-    # Fix: Create event loop with proper cleanup
     try:
-        # Check if event loop exists and is closed
-        loop = None
-        try:
-            loop = asyncio.get_running_loop()
-            # If we get here, we're already in an async context - use it directly
-            logger.warning("⚠️ Event loop already running - using existing loop")
-            return asyncio.run_coroutine_threadsafe(
-                _process_chat_intent_async(
-                    session_id=session_id,
-                    user_message=user_message,
-                    request_id=request_id,
-                    user_id=user_id,
-                    attachments=attachments or []
-                ),
-                loop
-            ).result()
-        except RuntimeError:
-            # No running loop, we're in sync context (normal Celery case)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(
-                    _process_chat_intent_async(
-                        session_id=session_id,
-                        user_message=user_message,
-                        request_id=request_id,
-                        user_id=user_id,
-                        attachments=attachments or []
-                    )
-                )
-                return result
-            finally:
-                # Properly cleanup event loop
-                loop.close()
-                asyncio.set_event_loop(None)
+        # Reuse the persistent worker event loop
+        loop = _get_worker_loop()
+        
+        result = loop.run_until_complete(
+            _process_chat_intent_async(
+                session_id=session_id,
+                user_message=user_message,
+                request_id=request_id,
+                user_id=user_id,
+                attachments=attachments or []
+            )
+        )
+        return result
     except Exception as e:
         logger.error(f"❌ Fatal error in process_chat_intent: {e}", exc_info=True)
         return {
@@ -186,7 +203,7 @@ async def _process_chat_intent_async(
         # Use cached services from this worker
         intent_service = GeminiIntentService()
         rag_service = _worker_cache["rag_service"] or RAGService()
-        tree_service = _worker_cache["tree_service"] or TreeRenderService()
+        rag_service = _worker_cache["rag_service"] or RAGService()
         chat_repo = ChatRepositoryImpl()
         
         # Step 1: Update session status to 'rendering'
@@ -268,57 +285,45 @@ async def _process_chat_intent_async(
             logger.warning(f"⚠️ Failed to publish progress event: {e}")
         
         try:
-            logger.info(f"   → Rendering tree with intent: {intent}")
-            user_uuid = UUID(user_id) if user_id else None
-            tree_data = await tree_service.render_tree(
-                intent=intent,
-                documents=documents,
-                user_id=user_uuid
-            )
+            logger.info(f"   → Rendering tree for message: {user_message}")
+            
+            from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
+            skill_tree_service = get_skill_tree_query_service()
+            
+            tree_nodes = await skill_tree_service.query(user_message, max_level=None)
+            
+            if not tree_nodes:
+                raise ValueError(f"No tree nodes generated for message: {user_message}")
+            
+            tree_data = _convert_tree_nodes_to_dict(tree_nodes, intent)
             logger.info(f"✅ Tree rendered with {len(tree_data.get('nodes', []))} nodes")
-        except asyncio.TimeoutError:
-            logger.error(f"❌ Tree rendering TIMEOUT")
-            tree_data = tree_service._default_tree(intent)
+            await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"❌ Tree rendering failed: {e}", exc_info=True)
-            tree_data = tree_service._default_tree(intent)
+            raise
         
-        # Step 6: Store tree data and update session
-        logger.info(f"💾 Step 6: Storing tree data")
+        
+        # Step 6 & 8: Store tree data AND set status to idle (combined to avoid DB conflict)
+        logger.info(f"💾 Step 6+8: Saving tree data and updating status to idle")
         try:
-            logger.info(f"   → Preparing context data...")
-            # Transform nodes: convert 'label' field to 'name' for backend usecase compatibility
-            raw_nodes = tree_data.get("nodes", []) if isinstance(tree_data, dict) else []
-            transformed_nodes = []
-            for node in raw_nodes:
-                transformed_node = dict(node)  # Copy original node
-                if "label" in transformed_node and "name" not in transformed_node:
-                    transformed_node["name"] = transformed_node.pop("label")
-                # Ensure all required fields exist
-                if "type" not in transformed_node:
-                    transformed_node["type"] = "skill"
-                if "level" not in transformed_node:
-                    transformed_node["level"] = 1
-                if "description" not in transformed_node:
-                    transformed_node["description"] = ""
-                if "metadata" not in transformed_node:
-                    transformed_node["metadata"] = {}
-                transformed_nodes.append(transformed_node)
-            
-            # Format: save tree_nodes as the primary data structure
+            # Store ONLY tree_nodes in context_data (Clean format)
             context_data = {
-                "tree_nodes": transformed_nodes,
-                "tree": tree_data,  # Keep full tree for reference
-                "intent": intent,
-                "keywords": keywords,
-                "documents_count": len(documents),
-                "generated_at": datetime.utcnow().isoformat()
+                "tree_nodes": tree_data.get("tree_nodes", [])
             }
-            logger.info(f"   → Updating session context with {len(context_data.get('tree_nodes', []))} nodes...")
-            await chat_repo.update_session_context(session_uuid_obj, context_data)
-            logger.info(f"✅ Context data saved successfully: {len(context_data.get('tree_nodes', []))} nodes with transformed fields")
+            logger.info(f"   → Saving {len(context_data['tree_nodes'])} nodes + setting status=idle...")
+            
+            # Combined update to avoid asyncpg connection conflict
+            await chat_repo.update_context_and_status(session_uuid_obj, context_data, status="idle")
+            
+            logger.info(f"✅ Tree data saved + status updated: {len(context_data['tree_nodes'])} nodes")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to save context data: {e}", exc_info=True)
+            logger.error(f"❌ Failed to save tree + update status: {e}", exc_info=True)
+            # Fallback: try updating status only
+            try:
+                await _update_session_status(session_uuid_obj, "idle")
+            except Exception as e2:
+                logger.warning(f"⚠️ Fallback status update also failed: {e2}")
+
         
         # Step 7: Publish tree_ready event (100%)
         logger.info(f"✅ Step 7: Publishing tree_ready event (100%)")
@@ -332,12 +337,6 @@ async def _process_chat_intent_async(
         except Exception as e:
             logger.warning(f"⚠️ Failed to publish tree_ready event: {e}")
         
-        # Step 8: Reset session status to 'idle'
-        logger.info(f"🔄 Step 8: Resetting status to idle")
-        try:
-            await _update_session_status(session_uuid_obj, "idle")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to update session status to idle: {e}")
         
         return {
             "request_id": request_id,

@@ -31,6 +31,7 @@ class ChatSession:
     id: UUID = field(default_factory=uuid4)
     user_id: Optional[UUID] = None
     title: Optional[str] = None
+    status: str = "idle" # Added status field
     context_data: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
