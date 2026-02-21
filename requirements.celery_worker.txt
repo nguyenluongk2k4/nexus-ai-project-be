@@ -37,3 +37,6 @@ humanfriendly==10.0
 # Type hints
 typing-extensions==4.15.0
 annotated-types==0.7.0
+
+# Document Parsing
+pypdf==3.17.4
