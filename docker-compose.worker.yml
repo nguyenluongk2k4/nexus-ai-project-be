@@ -17,10 +17,8 @@ services:
       CHROMA_MODE: server
       CHROMA_HOST: nexusai-chromadb
       CHROMA_PORT: 8000
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_API_KEY: ${GOOGLE_API_KEY:-${GEMINI_API_KEY}}
       LOG_LEVEL: info
-    volumes:
-      - ./:/app  # Mount code for development
     networks:
       - nexusai-network
     restart: unless-stopped
