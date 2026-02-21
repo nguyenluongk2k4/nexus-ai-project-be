@@ -93,5 +93,4 @@ services:
 
 networks:
   nexusai-network:
-    name: nexusai-network
-    driver: bridge
+    external: true
