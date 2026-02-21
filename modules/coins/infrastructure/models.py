@@ -108,3 +108,14 @@ class ReferralModel(Base):
     coins_awarded: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class CoinConfigModel(Base):
+    """Coin feature cost configuration"""
+    __tablename__ = "coin_configs"
+    
+    id: Mapped[uuid_module.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    feature_key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    cost: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)

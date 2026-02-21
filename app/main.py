@@ -52,17 +52,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     
-    # Pre-load AI models
-    try:
-        from modules.chat.providers import get_llm, get_vector_store
-        get_llm()
-        logger.info("LLM model loaded")
-        
-        vector_store = get_vector_store()
-        doc_count = vector_store.collection.count()
-        logger.info(f"Vector store loaded: {doc_count} documents in ChromaDB")
-    except Exception as e:
-        logger.warning(f"Could not pre-load models: {e}")
+    # Model loading has been moved to Celery workers
     
     logger.info("NexusAI Backend ready!")
     

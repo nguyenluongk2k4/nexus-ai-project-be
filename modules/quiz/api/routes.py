@@ -6,6 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from shared.database.connection import get_db
+
 from modules.auth.api.deps import get_current_user_id
 from modules.quiz.api.schemas import (
     GenerateQuizRequest,
@@ -60,13 +63,35 @@ async def get_user_quiz_stats(
 async def generate_quiz(
     request: GenerateQuizRequest,
     user_id: UUID = Depends(get_current_user_id),
-    usecase: GenerateQuizUseCase = Depends(get_generate_quiz_usecase)
+    usecase: GenerateQuizUseCase = Depends(get_generate_quiz_usecase),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Generate a new personalized quiz for a skill node.
     AI will analyze user's historical performance and focus on weak topics.
     """
     try:
+        # Coins Integration: Deduct coins for quiz generation
+        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository, SQLAlchemyCoinConfigRepository
+        from modules.coins.domain.services.coins_service import CoinsService
+        
+        coins_repo = SQLAlchemyCoinsRepository(db)
+        coins_service = CoinsService(coins_repo)
+        config_repo = SQLAlchemyCoinConfigRepository(db)
+        
+        coin_config = await config_repo.get_config('quiz_attempt')
+        cost = coin_config.cost if coin_config else 2
+        
+        try:
+            await coins_service.spend_coins(
+                user_id=user_id,
+                amount=cost,
+                service_type='quiz_attempt',
+                description=f"Tham gia trắc nghiệm: {request.node_name}"
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail="Bạn không đủ xu để tham gia bài trắc nghiệm. Hãy làm nhiệm vụ để nhận thêm xu!")
+        
         # Fetch node resources for suggested resources feature
         resources = None
         try:

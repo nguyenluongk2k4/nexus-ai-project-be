@@ -92,6 +92,12 @@ def setup_worker_process(sender, **kwargs):
     
     # Step 2: Dispose inherited engine to force fresh connections on this loop
     from shared.database.connection import engine
+    
+    # Pre-import all models so SQLAlchemy metadata can resolve cross-module Foreign Keys (e.g. users)
+    import modules.auth.infrastructure.models
+    import modules.coins.infrastructure.models
+    import modules.chat.infrastructure.models
+    import modules.skill_tree.infrastructure.models
     try:
         loop.run_until_complete(engine.dispose())
         logger.info("✅ Database engine disposed (clean connection pool for worker)")
@@ -123,7 +129,8 @@ def process_chat_intent(
     user_message: str,
     request_id: str,
     user_id: Optional[str] = None,
-    attachments: Optional[List] = None
+    attachments: Optional[List] = None,
+    user_msg_id: Optional[str] = None
 ) -> dict:
     """
     Process chat intent with Gemini + RAG + Tree rendering
@@ -164,7 +171,8 @@ def process_chat_intent(
                 user_message=user_message,
                 request_id=request_id,
                 user_id=user_id,
-                attachments=attachments or []
+                attachments=attachments or [],
+                user_msg_id=user_msg_id
             )
         )
         return result
@@ -183,7 +191,8 @@ async def _process_chat_intent_async(
     user_message: str,
     request_id: str,
     user_id: Optional[str] = None,
-    attachments: Optional[List] = None
+    attachments: Optional[List] = None,
+    user_msg_id: Optional[str] = None
 ) -> dict:
     """Async implementation of chat processing"""
     global _worker_cache
@@ -241,7 +250,72 @@ async def _process_chat_intent_async(
             logger.error(f"❌ Intent extraction TIMEOUT - using default")
         except Exception as e:
             logger.error(f"❌ Intent extraction failed: {e}", exc_info=True)
+            
+        # Check if it's a skill tree query
+        from modules.skill_tree.domain.services.skill_tree_query import get_skill_tree_query_service
+        skill_tree_service = get_skill_tree_query_service()
         
+        # We need the AI response first to give full context for the tree query check
+        logger.info(f"💬 Step 3.5: Generating AI Chatbot text response")
+        try:
+            from modules.chat.domain.services import ChatbotService
+            from modules.chat.providers import get_llm, get_vector_store
+            
+            chat_service = ChatbotService(
+                llm=get_llm(),
+                vector_store=get_vector_store(),
+                chat_repo=chat_repo
+            )
+            
+            response_dict = await chat_service.respond(session_uuid_obj, user_message, attachments, user_msg_id=user_msg_id)
+            ai_response = response_dict["text"]
+            logger.info(f"✅ AI Response generated successfully")
+            
+            # Cache the response for the HTTP Stream to pick up without hammering the DB
+            try:
+                import json
+                cache_key = f"chat:session:{session_id}:bot_message"
+                await redis_event_manager.set_cache(cache_key, json.dumps(response_dict), ttl=600)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to cache bot_message: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ AI Response generation failed: {e}", exc_info=True)
+            ai_response = "Xin lỗi, đã xảy ra lỗi khi tạo câu trả lời. Vui lòng thử lại sau."
+        
+        tree_context = f"{user_message}\n\nContext from AI: {ai_response[:2000]}"
+        is_tree_query = await skill_tree_service.is_skill_tree_query(tree_context)
+        
+        if not is_tree_query:
+            logger.info(f"⏭️ Not a skill tree query, skipping tree rendering.")
+            # Set status to idle
+            await _update_session_status(session_uuid_obj, "idle")
+            await redis_event_manager.publish_ready_event(
+                session_id=session_uuid,
+                tree_data=None
+            )
+            return {
+                "request_id": request_id,
+                "session_id": session_id,
+                "status": "completed",
+                "intent": intent,
+                "tree": None
+            }
+        
+        else:
+            logger.info(f"🌳 Skill tree query detected. Publishing tree_task_started event.")
+            
+            # Coin deduction moved to Step 4 before Chroma RAG
+            
+            channel = f"chat:session:{session_uuid}:reply"
+            msg_data = {
+                "type": "tree_task_started",
+                "session_id": session_id,
+                "request_id": request_id,
+                "message": "Đang phân tích để tạo Skill Tree..."
+            }
+            await redis_event_manager.publish(channel, msg_data)
+            
         # Step 4: Query RAG for documents (~40% progress)
         logger.info(f"📚 Step 4: Querying RAG for documents")
         try:
@@ -257,7 +331,57 @@ async def _process_chat_intent_async(
             logger.warning(f"⚠️ Failed to publish progress event: {e}")
         
         try:
-            logger.info(f"   → Querying RAG for documents...")
+            # --- COINS DEDUCTION FOR TREE GENERATION ---
+            if user_id:
+                try:
+                    from shared.database.connection import get_db_context
+                    from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository, SQLAlchemyCoinConfigRepository
+                    from modules.coins.domain.services.coins_service import CoinsService
+                    
+                    async with get_db_context() as db:
+                        coins_repo = SQLAlchemyCoinsRepository(db)
+                        coins_service = CoinsService(coins_repo)
+                        config_repo = SQLAlchemyCoinConfigRepository(db)
+                        
+                        coin_config_tree = await config_repo.get_config('generate_tree')
+                        cost_tree = coin_config_tree.cost if coin_config_tree else 10
+                        
+                        # UUID parsing safely
+                        uid = UUID(user_id) if isinstance(user_id, str) else user_id
+                        
+                        logger.info(f"💸💲 [DEDUCTION] Attempting to deduct {cost_tree} coins for {uid} immediately before Chroma...")
+                        await coins_service.spend_coins(
+                            user_id=uid,
+                            amount=cost_tree,
+                            service_type='skill_tree_generation',
+                            description=f"Generated skill tree (from chat)"
+                        )
+                        logger.info(f"✅💲 [DEDUCTION] Successfully deducted {cost_tree} coins for tree generation!")
+                        
+                except ValueError as e:
+                    logger.warning(f"🚫 Insufficient coins for tree generation for user {user_id}")
+                    # Notify user via WS about insufficient coins
+                    channel = f"chat:session:{session_uuid}:reply"
+                    await redis_event_manager.publish(channel, {
+                        "type": "error",
+                        "error": "insufficient_coins",
+                        "message": "Bạn không đủ xu để tạo skill tree. Hãy làm nhiệm vụ để nhận thêm xu!",
+                        "session_id": session_id
+                    })
+                    # Reset status to idle so they can chat normally again
+                    await _update_session_status(session_uuid_obj, "idle")
+                    await redis_event_manager.publish_ready_event(session_id=session_uuid, tree_data=None)
+                    return {
+                        "request_id": request_id,
+                        "session_id": session_id,
+                        "status": "completed",
+                        "intent": intent,
+                        "tree": None
+                    }
+                except Exception as e:
+                    logger.error(f"❌ Error deducting coins for tree generation: {e}")
+
+            logger.info(f"   → Querying RAG/Chroma DB for documents...")
             documents = await rag_service.query_documents(
                 query=user_message,
                 n_results=5

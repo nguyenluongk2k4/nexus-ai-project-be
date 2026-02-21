@@ -249,17 +249,21 @@ async def generate_skill_tree(
     Returns SSE stream with status updates and final tree nodes.
     """
     async with get_db_context() as db:
-        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository
+        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository, SQLAlchemyCoinConfigRepository
         from modules.coins.domain.services.coins_service import CoinsService
         
         coins_repo = SQLAlchemyCoinsRepository(db)
         coins_service = CoinsService(coins_repo)
+        config_repo = SQLAlchemyCoinConfigRepository(db)
         
         try:
+            coin_config = await config_repo.get_config('generate_tree')
+            cost = coin_config.cost if coin_config else 10
+            
             # Spend coins for tree generation
             await coins_service.spend_coins(
                 user_id=user_id,
-                amount=settings.COIN_COST_SKILL_TREE_GEN,
+                amount=cost,
                 service_type='skill_tree_generation',
                 description=f"Generated skill tree: {request.message[:50]}..."
             )
