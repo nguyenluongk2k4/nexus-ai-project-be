@@ -23,6 +23,7 @@ class UserModel(Base):
     google_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255))
     avatar_url: Mapped[Optional[str]] = mapped_column(String(500))
+    referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     balance: Mapped[float] = mapped_column(Numeric, default=0.0)
     subscription_tier: Mapped[Optional[str]] = mapped_column(String(50), default="free")

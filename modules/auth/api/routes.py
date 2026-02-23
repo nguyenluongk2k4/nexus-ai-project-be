@@ -120,26 +120,32 @@ async def google_callback(
                 print(f"[DEBUG] User already linked to Google ID: {user.google_id}")
         else:
             print(f"[DEBUG] Creating new user for {email}")
-            # Create new user
-            # Generate random password for OAuth users
+            # Create new user with new referral code
             from modules.auth.domain.entities import User as UserEntity
+            from modules.referral.infrastructure.repository import SQLAlchemyReferralRepository
             import secrets
+            import uuid as uuid_module
             
             random_password = secrets.token_urlsafe(16)
             password_service = get_password_service()
             
             # Username from email prefix + random suffix to ensure uniqueness
             base_username = email.split("@")[0]
-            # Add longer suffix to ensure uniqueness
             username = f"{base_username}_{secrets.token_hex(4)}"
             
+            # Generate referral code (new algorithm)
+            user_id = uuid_module.uuid4()
+            referral_code = SQLAlchemyReferralRepository._uuid_to_base62(user_id)
+            
             new_user = UserEntity(
+                id=user_id,
                 email=email,
                 username=username,
                 password_hash=password_service.hash_password(random_password),
                 full_name=full_name,
                 avatar_url=avatar_url,
-                google_id=google_id
+                google_id=google_id,
+                referral_code=referral_code
             )
             user = await user_repo.create(new_user)
             print(f"[DEBUG] User created: {user.id}")
@@ -212,12 +218,20 @@ async def register(
             detail="Username already taken"
         )
     
-    # Create user
+    # Create user with new referral code
+    from modules.referral.infrastructure.repository import SQLAlchemyReferralRepository
+    import uuid as uuid_module
+    
+    temp_id = uuid_module.uuid4()
+    referral_code = SQLAlchemyReferralRepository._uuid_to_base62(temp_id)
+    
     user = User(
+        id=temp_id,
         email=data.email,
         username=data.username,
         password_hash=password_service.hash_password(data.password),
-        full_name=data.full_name
+        full_name=data.full_name,
+        referral_code=referral_code
     )
     
     created_user = await user_repo.create(user)
