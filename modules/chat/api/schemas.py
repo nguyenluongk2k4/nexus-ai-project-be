@@ -36,3 +36,31 @@ class MessageResponse(BaseModel):
     content: str
     attachments: list[dict] = []
     created_at: datetime
+
+
+class AsyncChatRequest(BaseModel):
+    """Async chat request (for 202 Accepted response)"""
+    text: str
+    session_id: Optional[str] = None
+    attachments: list[dict] = []
+
+
+class AsyncChatAcceptedResponse(BaseModel):
+    """202 Accepted response for async chat processing"""
+    request_id: str
+    session_id: str
+    task_id: str
+    status: str = "processing"
+    message: str = "Your message is being processed. Listen to /ws/chat/{session_id} for updates."
+
+
+class ChatEventPayload(BaseModel):
+    """Redis Pub/Sub event payload"""
+    session_id: int
+    type: str  # intent_detected, rendering_progress, tree_ready, error
+    timestamp: Optional[datetime] = None
+    status: Optional[str] = None
+    progress: Optional[int] = None
+    tree: Optional[dict] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None

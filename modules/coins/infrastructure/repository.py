@@ -6,11 +6,14 @@ from modules.coins.domain.ports.coins_repository import CoinsRepositoryPort
 from modules.coins.domain.ports.mission_repository import MissionRepositoryPort
 from modules.coins.domain.entities.transaction import UserCoins, CoinTransaction
 from modules.coins.domain.entities.mission import Mission, UserMission
+from modules.coins.domain.ports.coin_config_repository import CoinConfigRepositoryPort
+from modules.coins.domain.entities.coin_config import CoinConfig
 from modules.coins.infrastructure.models import (
     UserCoinsModel, 
     CoinTransactionModel, 
     MissionModel, 
-    UserMissionModel
+    UserMissionModel,
+    CoinConfigModel
 )
 
 class SQLAlchemyCoinsRepository(CoinsRepositoryPort):
@@ -174,3 +177,35 @@ class SQLAlchemyMissionRepository(MissionRepositoryPort):
         self.session.add(model)
         await self.session.flush()
         return user_mission
+
+class SQLAlchemyCoinConfigRepository(CoinConfigRepositoryPort):
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_config(self, feature_key: str) -> Optional[CoinConfig]:
+        result = await self.session.execute(
+            select(CoinConfigModel).where(CoinConfigModel.feature_key == feature_key)
+        )
+        model = result.scalar_one_or_none()
+        if not model:
+            return None
+        return CoinConfig(
+            id=model.id,
+            feature_key=model.feature_key,
+            cost=model.cost,
+            description=model.description,
+            updated_at=model.updated_at
+        )
+        
+    async def update_config(self, config: CoinConfig) -> CoinConfig:
+        result = await self.session.execute(
+            select(CoinConfigModel).where(CoinConfigModel.feature_key == config.feature_key)
+        )
+        model = result.scalar_one_or_none()
+        if model:
+            model.cost = config.cost
+            model.description = config.description
+            self.session.add(model)
+            await self.session.flush()
+        return config
+

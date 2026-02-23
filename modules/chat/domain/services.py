@@ -27,7 +27,7 @@ class ChatbotService:
         self.chat_repo = chat_repo
         self.max_context_messages = 10
     
-    async def respond(self, session_id: UUID, user_message: str, attachments: List[dict] = []) -> str:
+    async def respond(self, session_id: UUID, user_message: str, attachments: List[dict] = [], user_msg_id: str = None) -> dict:
         """
         Generate AI response for user message
         Flow: Search RAG -> Build prompt -> Generate -> Save to memory
@@ -60,19 +60,16 @@ class ChatbotService:
         ai_response = await self.llm.generate(prompt)
         
         # 6. Save messages to memory
-        await self.chat_repo.add_message(Message(
-            session_id=session_id,
-            role=MessageRole.USER,
-            content=user_message,
-            attachments=attachments
-        ))
-        await self.chat_repo.add_message(Message(
+        saved_bot_msg = await self.chat_repo.add_message(Message(
             session_id=session_id,
             role=MessageRole.ASSISTANT,
             content=ai_response
         ))
         
-        return ai_response
+        return {
+            "text": ai_response,
+            "id": str(saved_bot_msg.id)
+        }
     
     def _build_prompt(
         self, 

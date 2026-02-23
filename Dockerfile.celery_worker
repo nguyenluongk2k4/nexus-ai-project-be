@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.celery_worker.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r requirements.celery_worker.txt
+
+# Copy application code
+COPY . .
+
+# Run Celery worker
+CMD ["celery", "-A", "modules.chat.tasks", "worker", "--loglevel=info", "--concurrency=4"]

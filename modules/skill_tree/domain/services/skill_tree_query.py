@@ -24,6 +24,7 @@ class TreeNodeResult:
     level: int = 0
     icon: Optional[str] = None
     metadata: Optional[dict] = None
+    original_node_id: Optional[str] = None  # Original DB/Chroma ID
 
 
 class SkillTreeQueryService:
@@ -480,7 +481,8 @@ JSON only, không text khác."""
                     metadata={
                         "difficultyLevel": db_node.difficulty_level or "beginner",
                         "estimatedHours": db_node.estimated_hours or 5
-                    }
+                    },
+                    original_node_id=str(db_node.id)
                 )
                 nodes.append(node_result)
                 print(f"  ✅ Added {expected_type}: {db_node.name[:40]}")
@@ -497,7 +499,8 @@ JSON only, không text khác."""
                     type=expected_type,
                     level=expected_level,
                     icon=metadata.get("icon"),
-                    parent_id=parent_id
+                    parent_id=parent_id,
+                    original_node_id=raw_id if self.is_valid_uuid(raw_id) else None
                 )
                 nodes.append(node_result)
                 print(f"  ⚠️ Added {expected_type} (no DB): {display_name[:40]}")
