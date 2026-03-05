@@ -13,7 +13,8 @@ from modules.coins.api.schemas import (
     CoinsBalanceResponse, 
     TransactionResponse, 
     MissionResponse, 
-    UserMissionResponse
+    UserMissionResponse,
+    ExchangeRequest
 )
 
 router = APIRouter(prefix="/coins", tags=["Coins"])
@@ -131,3 +132,72 @@ async def claim_mission_reward(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/exchange", response_model=dict)
+async def exchange_currency(
+    request: ExchangeRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Exchange balance to coins. 10,000 VND = 50 Coins (200 VND = 1 Coin)."""
+    from modules.auth.infrastructure.models import UserModel
+    from sqlalchemy import select
+    
+    if request.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+        
+    service = get_coins_service(db)
+    
+    # Needs to lock user record to prevent race conditions during transaction
+    result = await db.execute(select(UserModel).where(UserModel.id == user_id).with_for_update())
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if request.from_currency == "balance":
+        if user.balance < request.amount:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
+            
+        coins_to_add = int(request.amount / 200)
+        
+        # Deduct balance
+        user.balance = float(user.balance) - float(request.amount)
+        
+        # Add coins
+        await service.award_coins(
+            user_id=user_id,
+            amount=coins_to_add,
+            transaction_type="exchange",
+            service_type="balance_to_coins",
+            description=f"Exchange {int(request.amount)}đ to {coins_to_add} coins"
+        )
+        
+        await db.commit()
+        return {"status": "success", "message": f"Successfully exchanged {int(request.amount)}đ for {coins_to_add} coins", "new_balance": user.balance}
+        
+    elif request.from_currency == "coins":
+        # Ensure user has enough coins
+        current_coins = await service.get_balance(user_id)
+        if current_coins < request.amount:
+            raise HTTPException(status_code=400, detail="Insufficient coins")
+            
+        # 1 coin = 200 VND
+        money_to_add = int(request.amount * 200)
+        
+        # Deduct coins
+        await service.spend_coins(
+            user_id=user_id,
+            amount=int(request.amount),
+            service_type="coins_to_balance",
+            description=f"Exchange {int(request.amount)} coins to {money_to_add}đ"
+        )
+        
+        # Add to local balance
+        user.balance = float(user.balance) + float(money_to_add)
+        
+        await db.commit()
+        return {"status": "success", "message": f"Successfully exchanged {int(request.amount)} coins for {money_to_add}đ", "new_balance": user.balance}
+        
+    else:
+        raise HTTPException(status_code=400, detail="Invalid from_currency, must be 'balance' or 'coins'")

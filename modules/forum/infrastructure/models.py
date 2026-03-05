@@ -7,7 +7,7 @@ from uuid import uuid4
 import uuid as uuid_module
 
 from sqlalchemy import String, Boolean, DateTime, Integer, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.database.connection import Base
@@ -45,6 +45,7 @@ class ForumPostModel(Base):
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    images: Mapped[Optional[list]] = mapped_column(JSONB, default=list)
     view_count: Mapped[int] = mapped_column(Integer, default=0)
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)

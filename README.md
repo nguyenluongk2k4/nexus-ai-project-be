@@ -169,7 +169,10 @@ docker build -t nexusai-backend .
 | Embeddings | SentenceTransformer (multilingual) |
 
 
-chroma run --host localhost --port 8001 --path ../chroma_db         
+chroma run --host localhost --port 8001 --path ../chroma_db
+.\nexus-ai-project-be\scripts\run_redis.bat        
+.\nexus-ai-project-be\scripts\run_notifications.bat
+.\nexus-ai-project-be\scripts\run_celery_worker.bat
 
 python scripts/sync_chroma_db.py
 

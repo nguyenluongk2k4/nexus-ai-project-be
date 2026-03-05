@@ -23,7 +23,11 @@ DATABASE_URL = settings.DATABASE_URL
 engine = create_async_engine(
     DATABASE_URL,
     echo=True,  # Set to False in production
-    future=True
+    future=True,
+    pool_pre_ping=True,  # Automatically ping and reconnect if connection is closed
+    pool_recycle=1800,   # Recycle connections after 30 minutes
+    pool_size=5,
+    max_overflow=10
 )
 
 # Session factory

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 
 class RegisterRequest(BaseModel):
@@ -23,6 +23,28 @@ class TokenResponse(BaseModel):
     """Response with JWT token"""
     access_token: str
     token_type: str = "bearer"
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request to send OTP for password reset"""
+    email: EmailStr
+
+
+class VerifyOtpRequest(BaseModel):
+    """Request to verify the 6-digit OTP"""
+    email: EmailStr
+    otp: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request to reset password after OTP verification"""
+    email: EmailStr
+    reset_token: str = Field(..., alias="resetToken")
+    new_password: str = Field(..., alias="newPassword")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class UserResponse(BaseModel):

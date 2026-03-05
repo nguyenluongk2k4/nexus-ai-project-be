@@ -138,11 +138,13 @@ async def update_profile(
     user_repo = get_user_repository()
     
     # Update fields if provided
+    print(f"[DEBUG Profile Update] Received data: {data}")
     if data.full_name is not None:
         user.full_name = data.full_name
     if data.email is not None:
         user.email = data.email
     if data.avatar_url is not None:
+        print(f"[DEBUG Profile Update] Updating avatar_url to: {data.avatar_url}")
         user.avatar_url = data.avatar_url
     
     # Update timestamp

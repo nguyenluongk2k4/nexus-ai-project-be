@@ -143,6 +143,7 @@ class UserRepositoryImpl(AuthRepositoryPort):
             model.full_name = user.full_name
             model.email = user.email
             model.avatar_url = user.avatar_url
+            model.password_hash = user.password_hash
             if user.google_id:
                 model.google_id = user.google_id
             model.updated_at = datetime.now()
