@@ -6,9 +6,11 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import Optional, List
 from uuid import UUID
+import json
 
 from modules.auth.api.deps import get_current_user
 from modules.auth.domain.entities import User
+from modules.user.api.deps import require_admin
 from shared.database.connection import get_db
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -301,3 +303,292 @@ async def purchase_plan(
         expires_at=expires_at,
         amount_charged=price
     )
+
+
+# ============================================================
+# ADMIN ENDPOINTS - CRUD for Subscription Plans
+# ============================================================
+
+class CreatePlanRequest(BaseModel):
+    id: str
+    name: str
+    description: str
+    price_monthly: float
+    price_yearly: float
+    features: List[str]
+    badge_color: str = "#8B5CF6"
+    is_popular: bool = False
+    display_order: int = 0
+
+
+class UpdatePlanRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price_monthly: Optional[float] = None
+    price_yearly: Optional[float] = None
+    features: Optional[List[str]] = None
+    badge_color: Optional[str] = None
+    is_popular: Optional[bool] = None
+    is_active: Optional[bool] = None
+    display_order: Optional[int] = None
+
+
+class AdminPlanResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    price_monthly: float
+    price_yearly: float
+    features: List[str]
+    badge_color: str
+    is_popular: bool
+    is_active: bool
+    display_order: int
+    created_at: datetime
+
+
+@router.get(
+    "/admin/plans",
+    response_model=List[AdminPlanResponse],
+    summary="[Admin] Lấy tất cả subscription plans (bao gồm inactive)"
+)
+async def admin_get_all_plans(
+    session: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin)
+):
+    """Admin: Get all subscription plans including inactive ones"""
+    
+    result = await session.execute(
+        text("""
+            SELECT id, name, description, price_monthly, price_yearly, 
+                   features, badge_color, is_popular, is_active, display_order, created_at
+            FROM subscription_plans
+            ORDER BY display_order ASC, created_at DESC
+        """)
+    )
+    
+    plans = []
+    for row in result:
+        plans.append(AdminPlanResponse(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            price_monthly=float(row.price_monthly),
+            price_yearly=float(row.price_yearly),
+            features=row.features or [],
+            badge_color=row.badge_color,
+            is_popular=row.is_popular,
+            is_active=row.is_active,
+            display_order=row.display_order,
+            created_at=row.created_at
+        ))
+    
+    return plans
+
+
+@router.post(
+    "/admin/plans",
+    response_model=AdminPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="[Admin] Tạo subscription plan mới"
+)
+async def admin_create_plan(
+    data: CreatePlanRequest,
+    session: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin)
+):
+    """Admin: Create a new subscription plan"""
+    
+    # Check if plan ID already exists
+    existing = await session.execute(
+        text("SELECT id FROM subscription_plans WHERE id = :plan_id"),
+        {"plan_id": data.id}
+    )
+    if existing.first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Plan with ID '{data.id}' already exists"
+        )
+    
+    # Insert new plan
+    await session.execute(
+        text("""
+            INSERT INTO subscription_plans 
+            (id, name, description, price_monthly, price_yearly, features, 
+             badge_color, is_popular, display_order, is_active)
+            VALUES (:id, :name, :description, :price_monthly, :price_yearly, 
+                    CAST(:features AS jsonb), :badge_color, :is_popular, :display_order, TRUE)
+        """),
+        {
+            "id": data.id,
+            "name": data.name,
+            "description": data.description,
+            "price_monthly": data.price_monthly,
+            "price_yearly": data.price_yearly,
+            "features": json.dumps(data.features),
+            "badge_color": data.badge_color,
+            "is_popular": data.is_popular,
+            "display_order": data.display_order
+        }
+    )
+    await session.commit()
+    
+    # Fetch the created plan
+    result = await session.execute(
+        text("""
+            SELECT id, name, description, price_monthly, price_yearly, 
+                   features, badge_color, is_popular, is_active, display_order, created_at
+            FROM subscription_plans
+            WHERE id = :plan_id
+        """),
+        {"plan_id": data.id}
+    )
+    row = result.first()
+    
+    return AdminPlanResponse(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        price_monthly=float(row.price_monthly),
+        price_yearly=float(row.price_yearly),
+        features=row.features or [],
+        badge_color=row.badge_color,
+        is_popular=row.is_popular,
+        is_active=row.is_active,
+        display_order=row.display_order,
+        created_at=row.created_at
+    )
+
+
+@router.put(
+    "/admin/plans/{plan_id}",
+    response_model=AdminPlanResponse,
+    summary="[Admin] Cập nhật subscription plan"
+)
+async def admin_update_plan(
+    plan_id: str,
+    data: UpdatePlanRequest,
+    session: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin)
+):
+    """Admin: Update an existing subscription plan"""
+    
+    # Check if plan exists
+    existing = await session.execute(
+        text("SELECT id FROM subscription_plans WHERE id = :plan_id"),
+        {"plan_id": plan_id}
+    )
+    if not existing.first():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Plan '{plan_id}' not found"
+        )
+    
+    # Build dynamic update query
+    updates = []
+    params = {"plan_id": plan_id}
+    
+    if data.name is not None:
+        updates.append("name = :name")
+        params["name"] = data.name
+    if data.description is not None:
+        updates.append("description = :description")
+        params["description"] = data.description
+    if data.price_monthly is not None:
+        updates.append("price_monthly = :price_monthly")
+        params["price_monthly"] = data.price_monthly
+    if data.price_yearly is not None:
+        updates.append("price_yearly = :price_yearly")
+        params["price_yearly"] = data.price_yearly
+    if data.features is not None:
+        updates.append("features = CAST(:features AS jsonb)")
+        params["features"] = json.dumps(data.features)
+    if data.badge_color is not None:
+        updates.append("badge_color = :badge_color")
+        params["badge_color"] = data.badge_color
+    if data.is_popular is not None:
+        updates.append("is_popular = :is_popular")
+        params["is_popular"] = data.is_popular
+    if data.is_active is not None:
+        updates.append("is_active = :is_active")
+        params["is_active"] = data.is_active
+    if data.display_order is not None:
+        updates.append("display_order = :display_order")
+        params["display_order"] = data.display_order
+    
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update"
+        )
+    
+    # Execute update
+    query = f"UPDATE subscription_plans SET {', '.join(updates)} WHERE id = :plan_id"
+    await session.execute(text(query), params)
+    await session.commit()
+    
+    # Fetch updated plan
+    result = await session.execute(
+        text("""
+            SELECT id, name, description, price_monthly, price_yearly, 
+                   features, badge_color, is_popular, is_active, display_order, created_at
+            FROM subscription_plans
+            WHERE id = :plan_id
+        """),
+        {"plan_id": plan_id}
+    )
+    row = result.first()
+    
+    return AdminPlanResponse(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        price_monthly=float(row.price_monthly),
+        price_yearly=float(row.price_yearly),
+        features=row.features or [],
+        badge_color=row.badge_color,
+        is_popular=row.is_popular,
+        is_active=row.is_active,
+        display_order=row.display_order,
+        created_at=row.created_at
+    )
+
+
+@router.delete(
+    "/admin/plans/{plan_id}",
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Xóa (deactivate) subscription plan"
+)
+async def admin_delete_plan(
+    plan_id: str,
+    session: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin)
+):
+    """Admin: Soft delete a subscription plan (set is_active = False)"""
+    
+    # Check if plan exists
+    existing = await session.execute(
+        text("SELECT id FROM subscription_plans WHERE id = :plan_id"),
+        {"plan_id": plan_id}
+    )
+    if not existing.first():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Plan '{plan_id}' not found"
+        )
+    
+    # Prevent deleting 'free' plan
+    if plan_id == "free":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete the 'free' plan"
+        )
+    
+    # Soft delete by setting is_active = False
+    await session.execute(
+        text("UPDATE subscription_plans SET is_active = FALSE WHERE id = :plan_id"),
+        {"plan_id": plan_id}
+    )
+    await session.commit()
+    
+    return {"success": True, "message": f"Plan '{plan_id}' has been deactivated"}
