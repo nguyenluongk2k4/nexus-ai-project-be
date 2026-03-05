@@ -82,7 +82,8 @@ class UserRepositoryImpl(AuthRepositoryPort):
                 has_completed_tour=user.has_completed_tour,
                 has_completed_dashboard_tour=user.has_completed_dashboard_tour,
                 has_completed_skilltree_tour=user.has_completed_skilltree_tour,
-                has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour
+                has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour,
+                streak=user.streak
             )
             db.add(model)
             await db.commit()
@@ -91,7 +92,7 @@ class UserRepositoryImpl(AuthRepositoryPort):
             return self._to_entity(model)
     
     async def update_last_login(self, user_id: UUID) -> None:
-        """Update user's last login time"""
+        """Update user's last login time and streak"""
         async with async_session_maker() as db:
             result = await db.execute(
                 select(UserModel).where(UserModel.id == user_id)
@@ -99,7 +100,26 @@ class UserRepositoryImpl(AuthRepositoryPort):
             model = result.scalar_one_or_none()
             
             if model:
-                model.last_login_at = datetime.now()
+                now = datetime.now()
+                
+                # Streak Logic
+                if not model.last_login_at:
+                    model.streak = 1
+                else:
+                    # Calculate difference in days
+                    last_login_date = model.last_login_at.date()
+                    current_date = now.date()
+                    delta = (current_date - last_login_date).days
+                    
+                    if delta == 1:
+                        # Yesterday - increase streak
+                        model.streak += 1
+                    elif delta > 1:
+                        # Missed a day - reset streak
+                        model.streak = 1
+                    # If delta == 0 (today), keep streak as is
+                
+                model.last_login_at = now
                 await db.commit()
     
     async def update_tour_status(self, user_id: UUID, status: bool, phase: str = "all") -> None:
@@ -146,6 +166,7 @@ class UserRepositoryImpl(AuthRepositoryPort):
             model.password_hash = user.password_hash
             if user.google_id:
                 model.google_id = user.google_id
+            model.streak = user.streak
             model.updated_at = datetime.now()
             
             await db.commit()
@@ -174,6 +195,7 @@ class UserRepositoryImpl(AuthRepositoryPort):
             has_completed_dashboard_tour=model.has_completed_dashboard_tour,
             has_completed_skilltree_tour=model.has_completed_skilltree_tour,
             has_completed_master_skilltree_tour=model.has_completed_master_skilltree_tour,
+            streak=model.streak,
             created_at=model.created_at,
             updated_at=model.updated_at,
             last_login_at=model.last_login_at

@@ -261,6 +261,7 @@ async def register(
             has_completed_dashboard_tour=created_user.has_completed_dashboard_tour,
             has_completed_skilltree_tour=created_user.has_completed_skilltree_tour,
             has_completed_master_skilltree_tour=created_user.has_completed_master_skilltree_tour,
+            streak=created_user.streak,
             created_at=created_user.created_at,
             last_login_at=created_user.last_login_at
         )
@@ -302,6 +303,8 @@ async def login(data: LoginRequest):
     
     # Update last login
     await user_repo.update_last_login(user.id)
+    # Refetch to get updated streak and last_login_at
+    user = await user_repo.get_by_id(user.id)
     
     # Generate token
     token = jwt_service.create_access_token(
@@ -330,6 +333,7 @@ async def login(data: LoginRequest):
             has_completed_dashboard_tour=user.has_completed_dashboard_tour,
             has_completed_skilltree_tour=user.has_completed_skilltree_tour,
             has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour,
+            streak=user.streak,
             created_at=user.created_at,
             last_login_at=user.last_login_at
         )
@@ -472,6 +476,7 @@ async def get_me(user: User = Depends(get_current_user)):
         has_completed_dashboard_tour=user.has_completed_dashboard_tour,
         has_completed_skilltree_tour=user.has_completed_skilltree_tour,
         has_completed_master_skilltree_tour=user.has_completed_master_skilltree_tour,
+        streak=user.streak,
         created_at=user.created_at,
         last_login_at=user.last_login_at
     )

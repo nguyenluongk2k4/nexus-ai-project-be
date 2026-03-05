@@ -39,6 +39,7 @@ class ProfileResponse(BaseModel):
     subscription_tier: str = "free"
     subscription_tier_name: str = "Free"
     subscription_expires_at: Optional[datetime] = None
+    streak: int = 0
 
     class Config:
         from_attributes = True
@@ -112,7 +113,8 @@ async def get_profile(
         balance=balance,
         subscription_tier=tier,
         subscription_tier_name=tier_name,
-        subscription_expires_at=expires_at
+        subscription_expires_at=expires_at,
+        streak=user.streak
     )
 
 
@@ -180,7 +182,8 @@ async def update_profile(
         updated_at=updated_user.updated_at,
         last_login_at=updated_user.last_login_at,
         is_active=updated_user.is_active,
-        balance=0.0
+        balance=updated_user.balance,
+        streak=updated_user.streak
     )
 
 
@@ -233,7 +236,7 @@ async def get_profile_stats(
     forum_posts = forum_result.scalar() or 0
     
     # TODO: Calculate streak days from study_sessions (consecutive days with learning)
-    streak_days = 0  # Placeholder
+    streak_days = user.streak
     
     return ProfileStatsResponse(
         learning_hours=round(learning_hours, 1),

@@ -34,6 +34,7 @@ class UserModel(Base):
     has_completed_dashboard_tour: Mapped[bool] = mapped_column(Boolean, default=False)
     has_completed_skilltree_tour: Mapped[bool] = mapped_column(Boolean, default=False)
     has_completed_master_skilltree_tour: Mapped[bool] = mapped_column(Boolean, default=False)
+    streak: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
