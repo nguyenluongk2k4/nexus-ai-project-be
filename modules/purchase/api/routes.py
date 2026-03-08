@@ -81,10 +81,10 @@ class SePayWebhookPayload(BaseModel):
 # ============================================================
 
 # SePay config - should be in .env
-SEPAY_BANK_NAME = "MB Bank"
-SEPAY_ACCOUNT_NUMBER = "0828959442"
-SEPAY_ACCOUNT_NAME = "DINH THANH TUNG"
-SEPAY_QR_TEMPLATE = "https://qr.sepay.vn/img?acc={account}&bank=MBBank&amount={amount}&des={content}"
+SEPAY_BANK_NAME = "TP Bank"
+SEPAY_ACCOUNT_NUMBER = "12524042004"
+SEPAY_ACCOUNT_NAME = "NEXUS AI"
+SEPAY_QR_TEMPLATE = "https://qr.sepay.vn/img?acc={account}&bank=TPBank&amount={amount}&des={content}"
 SEPAY_WEBHOOK_SECRET = ""  # Set in .env for production
 
 # Transaction expiry time
