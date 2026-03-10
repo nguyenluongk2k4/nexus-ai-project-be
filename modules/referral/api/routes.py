@@ -54,6 +54,7 @@ async def get_referral_stats(
         my_code=result["my_code"],
         total_invited=result["total_invited"],
         total_earned=result["total_earned"],
+        referred_by_code=result.get("referred_by_code"),
         history=[ReferralHistoryItemResponse(**h) for h in result["history"]],
     )
 

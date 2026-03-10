@@ -23,4 +23,5 @@ class ReferralStatsResponse(BaseModel):
     my_code: str
     total_invited: int
     total_earned: int
+    referred_by_code: str | None = None
     history: List[ReferralHistoryItemResponse]

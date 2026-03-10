@@ -45,12 +45,20 @@ class GetReferralStatsUseCase:
         self.repo = repo
 
     async def execute(self, user_id: UUID) -> dict:
-        my_code = await self.repo.get_or_create_user_code(user_id)
-        referrals = await self.repo.get_referrals_by_referrer(user_id)
+        import asyncio
+        my_code, referrals, applied_referral = await asyncio.gather(
+            self.repo.get_or_create_user_code(user_id),
+            self.repo.get_referrals_by_referrer(user_id),
+            self.repo.get_by_referee_id(user_id)
+        )
+        
+        referred_by_code = applied_referral.referral_code if applied_referral else None
+
         return {
             "my_code": my_code,
             "total_invited": len(referrals),
             "total_earned": sum(r.coins_awarded for r in referrals if r.status == "completed"),
+            "referred_by_code": referred_by_code,
             "history": [
                 {
                     "referee_id": str(r.referee_id),
