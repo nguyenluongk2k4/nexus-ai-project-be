@@ -13,6 +13,7 @@ import hmac
 from modules.auth.api.deps import get_current_user, get_current_user_id
 from modules.auth.domain.entities import User
 from shared.database.connection import get_db
+from shared.notification.websocket_manager import notification_manager
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -554,6 +555,11 @@ async def buy_package_with_balance(
     )
     
     await session.commit()
+
+    await notification_manager.send_personal_message(str(user.id), {
+        "type": "wallet_balance_update",
+        "current_balance": new_balance
+    })
     
     # 5. Award coins (This automatically triggers the websocket notification)
     try:
@@ -716,6 +722,11 @@ async def convert_balance_to_coins(
     )
     
     await session.commit()
+
+    await notification_manager.send_personal_message(str(user.id), {
+        "type": "wallet_balance_update",
+        "current_balance": new_balance
+    })
     
     # 4. Award coins
     try:
