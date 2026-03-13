@@ -166,9 +166,11 @@ class RedisEventManager:
         channel = await self.get_channel_pattern(session_id, "ready")
         
         # Format tree for FE: rename tree_nodes to nodes and remove extra fields
-        formatted_tree = {
-            "nodes": tree_data.get("tree_nodes", [])
-        }
+        formatted_tree = None
+        if tree_data is not None:
+            formatted_tree = {
+                "nodes": tree_data.get("tree_nodes", [])
+            }
         
         event = {
             "session_id": session_id,

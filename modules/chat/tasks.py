@@ -420,7 +420,7 @@ async def _process_chat_intent_async(
                 raise ValueError(f"No tree nodes generated for message: {user_message}")
             
             tree_data = _convert_tree_nodes_to_dict(tree_nodes, intent)
-            logger.info(f"✅ Tree rendered with {len(tree_data.get('nodes', []))} nodes")
+            logger.info(f"✅ Tree rendered with {len(tree_data.get('tree_nodes', []))} nodes")
             await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"❌ Tree rendering failed: {e}", exc_info=True)

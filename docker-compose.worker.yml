@@ -14,7 +14,7 @@ services:
       REDIS_URL: redis://nexusai-redis:6379/0
       CELERY_BROKER_URL: redis://nexusai-redis:6379/0
       CELERY_RESULT_BACKEND: redis://nexusai-redis:6379/1
-      DATABASE_URL: postgresql+asyncpg://nexusai:nexusai_passwordit@nexusai-db:5432/nexusai
+      DATABASE_URL: postgresql+asyncpg://nexusai:nexusai_password@nexusai-db:5432/nexusai
       CHROMA_MODE: server
       CHROMA_HOST: nexusai-chromadb
       CHROMA_PORT: 8000
