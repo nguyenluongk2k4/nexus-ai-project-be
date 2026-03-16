@@ -89,12 +89,13 @@ async def get_overview_stats(
     # Tổng số gói đăng ký
     # Đếm users có subscription_tier != 'free' và subscription_expires_at còn hiệu lực
     subscriptions_query = """
-        SELECT COUNT(*) FROM users 
-        WHERE subscription_tier != 'free' 
-        AND subscription_expires_at IS NOT NULL
+        SELECT COUNT(*) FROM transactions 
+        WHERE type IS NOT NULL 
+            AND type='package_purchase'
+            AND status='completed'
     """
     if start_date:
-        subscriptions_query += " AND subscription_expires_at >= :start_date"
+        subscriptions_query += " AND created_at >= :start_date"
     if end_date:
         # Chỉ tính subscription được tạo trước end_date
         subscriptions_query += " AND created_at <= :end_date"
@@ -181,7 +182,7 @@ async def get_user_growth_chart(
 @router.get(
     "/subscription-distribution",
     response_model=SubscriptionChartResponse,
-    summary="[Admin] Biểu đồ phân bố gói đăng ký"
+    summary="[Admin] Biểu đồ phân bố gói xu"
 )
 async def get_subscription_chart(
     start_date: Optional[date] = Query(None, description="Ngày bắt đầu"),
@@ -195,22 +196,23 @@ async def get_subscription_chart(
     
     query = """
         SELECT 
-            subscription_tier,
+            cp.name,
             COUNT(*) as count
-        FROM users
-        WHERE subscription_tier != 'free'
-        AND subscription_expires_at IS NOT NULL
+        FROM transactions t
+        JOIN coin_packages cp ON t.amount = cp.price
+        WHERE t.type = 'package_purchase'
+        AND t.status = 'completed'
     """
     
     params = {}
     if start_date:
-        query += " AND subscription_expires_at >= :start_date"
+        query += " AND DATE(t.created_at) >= :start_date"
         params["start_date"] = start_date
     if end_date:
-        query += " AND created_at <= :end_date"
+        query += " AND DATE(t.created_at) <= :end_date"
         params["end_date"] = end_date
     
-    query += " GROUP BY subscription_tier ORDER BY count DESC"
+    query += " GROUP BY cp.name ORDER BY count DESC"
     
     result = await session.execute(text(query), params)
     rows = result.fetchall()
