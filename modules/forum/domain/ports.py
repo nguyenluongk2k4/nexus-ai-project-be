@@ -73,9 +73,16 @@ class ForumRepositoryPort(ABC):
     
     @abstractmethod
     async def create_post(
-        self, user_id: UUID, category_id: UUID, title: str, content: str
+        self, user_id: UUID, category_id: UUID, title: str, content: str, images: Optional[List[str]] = None
     ) -> ForumPost:
         """Create a new forum post"""
+        pass
+    
+    @abstractmethod
+    async def update_post(
+        self, post_id: UUID, user_id: UUID, title: Optional[str] = None, content: Optional[str] = None, category_id: Optional[UUID] = None, images: Optional[List[str]] = None
+    ) -> Optional[ForumPost]:
+        """Update an existing forum post. Must verify ownership."""
         pass
     
     @abstractmethod

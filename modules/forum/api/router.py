@@ -64,6 +64,7 @@ class PostResponse(BaseModel):
     categoryId: str
     categoryName: Optional[str] = None
     categoryColor: Optional[str] = None
+    images: Optional[List[str]] = []
     stats: PostStatsResponse
     createdAt: str
     updatedAt: Optional[str] = None
@@ -172,6 +173,7 @@ def post_to_response(post, is_liked: bool = False) -> PostResponse:
         categoryId=str(post.category_id) if post.category_id else "",
         categoryName=post.category_name,
         categoryColor=style["color"],
+        images=post.images,
         stats=PostStatsResponse(
             views=post.view_count,
             comments=post.comment_count,
@@ -465,6 +467,14 @@ class CreatePostRequest(BaseModel):
     categoryId: str
     title: str
     content: str
+    images: Optional[List[str]] = []
+
+
+class UpdatePostRequest(BaseModel):
+    categoryId: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    images: Optional[List[str]] = None
 
 
 class CreateCommentRequest(BaseModel):
@@ -506,12 +516,75 @@ async def create_post(
         user_id=user_id,
         category_id=category_uuid,
         title=data.title.strip(),
-        content=data.content.strip()
+        content=data.content.strip(),
+        images=data.images or []
     )
     
     await db.commit()
     
     return post_to_response(post)
+
+@router.put("/posts/{post_id}", response_model=PostResponse)
+async def update_post(
+    post_id: str,
+    data: UpdatePostRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a forum post (requires authentication & authorship)"""
+    repo = ForumRepositoryImpl(db)
+    
+    try:
+        post_uuid = UUID(post_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid post ID format")
+    
+    # Validation
+    category_uuid = None
+    if data.categoryId:
+        try:
+            category_uuid = UUID(data.categoryId)
+        except ValueError:
+            cat = await repo.get_category_by_slug(data.categoryId)
+            if not cat:
+                raise HTTPException(status_code=400, detail="Invalid category")
+            category_uuid = cat.id
+            
+    updated_post = await repo.update_post(
+        post_id=post_uuid,
+        user_id=user_id,
+        title=data.title.strip() if data.title else None,
+        content=data.content.strip() if data.content else None,
+        category_id=category_uuid,
+        images=data.images
+    )
+    
+    if not updated_post:
+        raise HTTPException(status_code=403, detail="Not authorized or post not found")
+        
+    await db.commit()
+    
+    return post_to_response(updated_post)
+
+@router.delete("/posts/{post_id}")
+async def delete_post(
+    post_id: str,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a forum post (requires authentication & authorship)"""
+    repo = ForumRepositoryImpl(db)
+    
+    try:
+        post_uuid = UUID(post_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid post ID format")
+    
+    deleted = await repo.delete_post(post_id=post_uuid, user_id=user_id)
+    if not deleted:
+        raise HTTPException(status_code=403, detail="Not authorized or post not found")
+        
+    return {"status": "success", "message": "Post deleted"}
 
 
 @router.post("/posts/{post_id}/like", response_model=LikeResponse)

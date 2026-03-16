@@ -190,6 +190,61 @@ class SkillTreeRepository(SkillTreePort):
             
             await session.commit()
             
+            # --- Auto-complete Node Logic ---
+            if status == 'completed':
+                # 1. Get the template node ID for this resource
+                res_stmt = select(LearningResourceModel.skill_node_id).where(LearningResourceModel.id == r_id)
+                res_result = await session.execute(res_stmt)
+                template_node_id = res_result.scalar_one_or_none()
+                
+                if template_node_id:
+                    # 2. Get all resources for this template node
+                    all_res_stmt = select(LearningResourceModel.id).where(LearningResourceModel.skill_node_id == template_node_id)
+                    all_res_result = await session.execute(all_res_stmt)
+                    all_res_ids = [row[0] for row in all_res_result.fetchall()]
+                    
+                    if all_res_ids:
+                        # 3. Check if all resources are completed
+                        completed_stmt = select(LearningProgressModel.resource_id).where(
+                            LearningProgressModel.user_id == user_id,
+                            LearningProgressModel.resource_id.in_(all_res_ids),
+                            LearningProgressModel.status == 'completed'
+                        )
+                        completed_result = await session.execute(completed_stmt)
+                        completed_ids = [row[0] for row in completed_result.fetchall()]
+                        
+                        if len(completed_ids) == len(all_res_ids):
+                            # 4. All resources completed! Now check if Quiz is passed.
+                            # We need to find the specific User Node ID to check Quiz Attempts
+                            node_stmt = select(UserSkillNodeModel).join(
+                                UserSkillTreeModel, UserSkillTreeModel.id == UserSkillNodeModel.tree_id
+                            ).where(
+                                UserSkillTreeModel.user_id == user_id,
+                                UserSkillNodeModel.original_node_id == template_node_id
+                            )
+                            node_result = await session.execute(node_stmt)
+                            user_node = node_result.scalar_one_or_none()
+                            
+                            if user_node:
+                                from modules.quiz.infrastructure.models import QuizAttempt
+                                quiz_stmt = select(QuizAttempt.score).where(
+                                QuizAttempt.user_id == user_id,
+                                (QuizAttempt.node_id == user_node.id) | (QuizAttempt.node_id == user_node.original_node_id),
+                                QuizAttempt.status == 'completed'
+                                ).order_by(QuizAttempt.completed_at.desc()).limit(1)
+                                
+                                quiz_result = await session.execute(quiz_stmt)
+                                best_score = quiz_result.scalar_one_or_none()
+                                
+                                # Only complete node if they passed the quiz (or if we later decide some nodes don't need quizzes)
+                                # For now, requirement is: must have quiz passed >= 70
+                                if best_score is not None and best_score >= 70:
+                                    if user_node.status != 'completed':
+                                        user_node.status = 'completed'
+                                        user_node.completed_at = datetime.now()
+                                        user_node.progress_percent = 100
+                                        await session.commit()
+            # --------------------------------
             # Return dict to avoid serialization issues
             return {
                 "id": str(progress.id),
@@ -212,112 +267,76 @@ class SkillTreeRepository(SkillTreePort):
             user_tree = result.scalar_one_or_none()
             
             if user_tree:
-                # TODO: Implement full user tree fetching with same limits
-                pass
-            
-            # 2. Return None if no user tree found (Do NOT fallback to default template)
-            if not user_tree:
-                return None
-            
-            # === OPTIMIZED: Find root nodes first, then get only first 2 levels ===
-            
-            # Step 1: Get root nodes (nodes without parents)
-            # A node is root if it's not in any descendant_id of depth=1 paths
-            all_nodes_stmt = select(TemplateSkillNodeModel.id).where(
-                TemplateSkillNodeModel.template_id == template.id
-            )
-            all_nodes_result = await session.execute(all_nodes_stmt)
-            all_node_ids = [row[0] for row in all_nodes_result.fetchall()]
-            
-            # Get all nodes that ARE descendants (have parents)
-            children_stmt = select(TemplateSkillPathModel.descendant_id).where(
-                TemplateSkillPathModel.depth == 1,
-                TemplateSkillPathModel.descendant_id.in_(all_node_ids)
-            ).distinct()
-            children_result = await session.execute(children_stmt)
-            child_ids = set(row[0] for row in children_result.fetchall())
-            
-            # Root nodes = all_nodes - children
-            root_ids = [nid for nid in all_node_ids if nid not in child_ids]
-            
-            # Step 2: Get level 1 children (direct children of roots)
-            level1_stmt = select(TemplateSkillPathModel.descendant_id).where(
-                TemplateSkillPathModel.depth == 1,
-                TemplateSkillPathModel.ancestor_id.in_(root_ids)
-            )
-            level1_result = await session.execute(level1_stmt)
-            level1_ids = [row[0] for row in level1_result.fetchall()]  # All level 1 nodes
-            
-            # LAZY LOADING: Only return level 0 + 1 initially
-            # Level 2 and 3 will be loaded via GET /nodes/{id}/children
-            selected_node_ids = list(set(root_ids + level1_ids))
-            
-            # Build level map for each node
-            level_map = {}
-            for nid in root_ids:
-                level_map[nid] = 0
-            for nid in level1_ids:
-                level_map[nid] = 1
-            
-            # Fetch only selected nodes
-            nodes_result = await session.execute(
-                select(TemplateSkillNodeModel)
-                .where(TemplateSkillNodeModel.id.in_(selected_node_ids))
-            )
-            nodes = nodes_result.scalars().all()
-            
-            # Construct response
-            tree_data = {
-                "id": str(template.id),
-                "name": template.name,
-                "nodes": [],
-                "edges": []
-            }
-            
-            node_map = {}
-            for node in nodes:
-                n_id = str(node.id)
-                node_level = level_map.get(node.id, 0)
-                node_map[n_id] = True
+                # === OPTIMIZED: Fetch actual User Tree ===
+                # Fetch all user nodes for this tree (initial load only needs max 20, but for now we get all to simplify unless it causes issues)
+                nodes_stmt = select(UserSkillNodeModel).where(UserSkillNodeModel.tree_id == user_tree.id)
+                nodes_result = await session.execute(nodes_stmt)
+                nodes = nodes_result.scalars().all()
                 
-                # Determine node type based on level
-                node_type = "root" if node_level == 0 else ("ability" if node_level == 1 else "skill")
+                # Construct response
+                tree_data = {
+                    "id": str(user_tree.id),
+                    "name": "My Skill Tree",
+                    "nodes": [],
+                    "edges": []
+                }
+            
+                # Since UserSkillNodeModel currently lacks a clear hierarchy/level in its schema aside from parent_id,
+                # we will construct a basic representation using its attributes
                 
-                tree_data["nodes"].append({
-                    "id": n_id,
-                    "label": node.name,
-                    "type": node_type,
-                    "level": node_level,  # CRITICAL: Frontend needs this for tree layout
-                    "icon": node.icon,
-                    "data": {
-                        "description": node.description,
-                        "status": "not_started"
-                    },
-                    "position": { "x": node.position_x or 0, "y": node.position_y or 0 }
-                })
+                for node in nodes:
+                    n_id = str(node.id)
+                    
+                    # Try to map level based on original node if possible, else default to 1
+                    node_level = node.level if hasattr(node, 'level') else 1 
+                    node_type = "root" if node_level == 0 else ("ability" if node_level == 1 else "skill")
+                    
+                    tree_data["nodes"].append({
+                        "id": n_id,
+                        "label": node.name,
+                        "type": node_type,
+                        "level": node_level,
+                        "icon": node.icon,
+                        "original_node_id": str(node.original_node_id) if node.original_node_id else None,
+                        "data": {
+                            "description": node.description,
+                            "status": node.status,
+                            "progress_percent": node.progress_percent
+                        },
+                        "position": { 
+                            "x": getattr(node, 'position_x', 0) or 0, 
+                            "y": getattr(node, 'position_y', 0) or 0 
+                        }
+                    })
 
-            # Fetch edges only for selected nodes
-            node_uuids = [n.id for n in nodes]
-            if node_uuids:
+                # Fetch edges for user tree (assuming paths exist or we build from parent_id)
                 edges_stmt = (
                     select(TemplateSkillPathModel)
                     .where(
                         TemplateSkillPathModel.depth == 1,
-                        TemplateSkillPathModel.ancestor_id.in_(node_uuids),
-                        TemplateSkillPathModel.descendant_id.in_(node_uuids)
+                        TemplateSkillPathModel.ancestor_id.in_([n.original_node_id for n in nodes if n.original_node_id]),
+                        TemplateSkillPathModel.descendant_id.in_([n.original_node_id for n in nodes if n.original_node_id])
                     )
                 )
                 edges_result = await session.execute(edges_stmt)
                 
+                # Map original IDs back to UserNode IDs for edges
+                orig_to_user = {str(n.original_node_id): str(n.id) for n in nodes if n.original_node_id}
+                
                 for edge in edges_result.scalars().all():
-                    tree_data["edges"].append({
-                        "id": f"e{edge.ancestor_id}-{edge.descendant_id}",
-                        "source": str(edge.ancestor_id),
-                        "target": str(edge.descendant_id),
-                        "animated": True
-                    })
+                    source_id = orig_to_user.get(str(edge.ancestor_id))
+                    target_id = orig_to_user.get(str(edge.descendant_id))
+                    if source_id and target_id:
+                        tree_data["edges"].append({
+                            "id": f"e{source_id}-{target_id}",
+                            "source": source_id,
+                            "target": target_id,
+                            "animated": True
+                        })
+                
+                return tree_data
             
-            return tree_data
+            return None
 
     async def get_node_children(self, node_id: UUID) -> Optional[dict]:
         """
@@ -495,6 +514,7 @@ class SkillTreeRepository(SkillTreePort):
                     "description": node.description,
                     "status": node.status,
                     "progress_percent": node.progress_percent,
+                    "original_node_id": str(node.original_node_id) if node.original_node_id else None,
                     "level": level,
                     "parent_id": parent_id,
                     "icon": node.icon,

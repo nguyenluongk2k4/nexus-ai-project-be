@@ -12,6 +12,7 @@ from modules.auth.api.deps import get_current_user
 from modules.auth.domain.entities import User
 from modules.user.api.deps import require_admin
 from shared.database.connection import get_db
+from shared.notification.websocket_manager import notification_manager
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -267,6 +268,11 @@ async def purchase_plan(
     )
     
     await session.commit()
+
+    await notification_manager.send_personal_message(str(user.id), {
+        "type": "wallet_balance_update",
+        "current_balance": new_balance
+    })
     
     # Coins Integration: Award 100 coins bonus for purchase
     try:

@@ -182,13 +182,71 @@ class QuizService:
             if q.user_answer and q.user_answer.is_correct:
                 topic_results[tag]["correct"] += 1
         
+        passed = score >= 70
+        
+        # Auto-complete the skill tree node if passed
+        if passed:
+            try:
+                from shared.database import get_db_context
+                from sqlalchemy import select
+                from datetime import datetime
+                from modules.skill_tree.infrastructure.models import (
+                    UserSkillNodeModel, 
+                    UserSkillTreeModel, 
+                    LearningResourceModel,
+                    LearningProgressModel
+                )
+                
+                async with get_db_context() as db:
+                    # Find the user node. attempt.node_id could be the User Node ID or Template ID
+                    node_stmt = select(UserSkillNodeModel).where(
+                        (UserSkillNodeModel.id == attempt.node_id) | 
+                        (UserSkillNodeModel.original_node_id == attempt.node_id)
+                    ).where(
+                        UserSkillNodeModel.tree_id.in_(
+                            select(UserSkillTreeModel.id).where(UserSkillTreeModel.user_id == attempt.user_id)
+                        )
+                    )
+                    node_result = await db.execute(node_stmt)
+                    user_node = node_result.scalar_one_or_none()
+                    
+                    if user_node and user_node.status != 'completed':
+                        # Check resources
+                        resources_stmt = select(LearningResourceModel.id).where(
+                            LearningResourceModel.skill_node_id == user_node.original_node_id
+                        )
+                        resources_result = await db.execute(resources_stmt)
+                        resource_ids = [r[0] for r in resources_result.fetchall()]
+                        
+                        if not resource_ids:
+                            all_resources_completed = True
+                        else:
+                            # Check if all these resources have 'completed' status in LearningProgress for this user
+                            progress_stmt = select(LearningProgressModel).where(
+                                LearningProgressModel.user_id == attempt.user_id,
+                                LearningProgressModel.resource_id.in_(resource_ids),
+                                LearningProgressModel.status == 'completed'
+                            )
+                            progress_result = await db.execute(progress_stmt)
+                            completed_resources = progress_result.scalars().all()
+                            
+                            all_resources_completed = len(completed_resources) == len(resource_ids)
+                        
+                        if all_resources_completed:
+                            user_node.status = 'completed'
+                            user_node.completed_at = datetime.now()
+                            user_node.progress_percent = 100
+                            await db.commit()
+            except Exception as e:
+                print(f"⚠️ Failed to auto-complete node after passing quiz: {e}")
+        
         return {
             "status": "completed",
             "score": round(score, 1),
             "correct_count": correct_count,
             "total_questions": total_questions,
             "topic_breakdown": topic_results,
-            "passed": score >= 70  # 70% to pass
+            "passed": passed
         }
 
 

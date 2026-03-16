@@ -4,6 +4,7 @@ from datetime import datetime
 from modules.coins.domain.ports.mission_repository import MissionRepositoryPort
 from modules.coins.domain.services.coins_service import CoinsService
 from modules.coins.domain.entities.mission import UserMission
+from shared.notification.websocket_manager import notification_manager
 
 class MissionService:
     def __init__(self, repository: MissionRepositoryPort, coins_service: CoinsService):
@@ -40,6 +41,8 @@ class MissionService:
                 # unless a new cycle is triggered. For now, just skip to avoid resetting a just-claimed mission.
                 continue
                 
+            previous_status = user_mission.status
+
             # Logic to update progress
             current_progress = user_mission.progress or {}
             
@@ -75,6 +78,17 @@ class MissionService:
                 user_mission.progress['progress'] = 'completed'
             
             await self.repository.update_user_mission(user_mission)
+
+            if user_mission.status == 'not_get_point' and previous_status != 'not_get_point':
+                await notification_manager.send_personal_message(str(user_id), {
+                    "type": "mission_update",
+                    "mission_id": str(mission.id),
+                    "mission_type": mission.mission_type,
+                    "mission_name": mission.name,
+                    "status": user_mission.status,
+                    "coin_reward": mission.coin_reward,
+                    "message": f"Nhiệm vụ '{mission.name}' đã sẵn sàng nhận {mission.coin_reward} xu.",
+                })
 
     async def claim_reward(self, user_id: UUID, mission_id: UUID) -> UserMission:
         """Manually claim reward for a completed mission"""

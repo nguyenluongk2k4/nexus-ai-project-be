@@ -18,4 +18,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY . .
 
 # Run Celery worker
-CMD ["celery", "-A", "modules.chat.tasks", "worker", "--loglevel=info", "--concurrency=4"]
+CMD ["celery", "-A", "modules.chat.tasks", "worker", "--loglevel=info", "--concurrency=2"]

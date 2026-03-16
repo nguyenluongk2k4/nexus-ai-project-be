@@ -27,6 +27,7 @@ class TimelineItemResponse(BaseModel):
     resourceId: str
     resourceName: str
     resourceType: str
+    nodeId: Optional[str] = None
     nodeName: str
     scheduledDate: str
     scheduledTime: Optional[str] = None  # HH:MM format
@@ -79,6 +80,7 @@ async def get_timeline_items(
                 ti.resource_id,
                 lr.title as resource_name,
                 lr.resource_type,
+                tsn.id as node_id,
                 COALESCE(tsn.name, 'Unknown') as node_name,
                 ti.scheduled_date,
                 ti.scheduled_time,
@@ -113,6 +115,7 @@ async def get_timeline_items(
             resourceId=str(row.resource_id),
             resourceName=row.resource_name or "Unknown",
             resourceType=row.resource_type or "article",
+            nodeId=str(row.node_id) if row.node_id else None,
             nodeName=row.node_name,
             scheduledDate=row.scheduled_date.isoformat() if row.scheduled_date else "",
             scheduledTime=row.scheduled_time,
@@ -217,6 +220,7 @@ async def add_timeline_item(
         resourceId=data.resourceId,
         resourceName=res.title,
         resourceType=res.resource_type or "article",
+        nodeId=str(res.skill_node_id) if res.skill_node_id else None,
         nodeName=node_name,
         scheduledDate=data.scheduledDate or "",
         deadline=data.deadline,

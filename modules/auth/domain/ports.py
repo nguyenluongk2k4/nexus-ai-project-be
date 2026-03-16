@@ -33,3 +33,7 @@ class AuthRepositoryPort(ABC):
     @abstractmethod
     async def update_tour_status(self, user_id: UUID, status: bool, phase: str = "all") -> None:
         pass
+
+    @abstractmethod
+    async def update(self, user: User) -> User:
+        pass

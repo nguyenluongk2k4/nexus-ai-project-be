@@ -45,11 +45,24 @@ class QuizRepositoryImpl(QuizRepositoryPort):
             return result.scalar_one_or_none()
     
     async def get_user_attempts(self, user_id: UUID, node_id: UUID) -> List[QuizAttempt]:
+        """Get all quiz attempts for a user on a specific node"""
         async with get_db_context() as db:
+            from modules.skill_tree.infrastructure.models import UserSkillNodeModel
+            
+            # Find related IDs (User Node ID & Original Template Node ID)
+            resolved_ids = {node_id}
+            node_stmt = select(UserSkillNodeModel.id, UserSkillNodeModel.original_node_id).where(
+                (UserSkillNodeModel.id == node_id) | (UserSkillNodeModel.original_node_id == node_id)
+            )
+            res = await db.execute(node_stmt)
+            for u_id, o_id in res.fetchall():
+                if u_id: resolved_ids.add(u_id)
+                if o_id: resolved_ids.add(o_id)
+                
             result = await db.execute(
                 select(QuizAttempt)
                 .where(QuizAttempt.user_id == user_id)
-                .where(QuizAttempt.node_id == node_id)
+                .where(QuizAttempt.node_id.in_(list(resolved_ids)))
                 .order_by(QuizAttempt.started_at.desc())
             )
             return list(result.scalars().all())
@@ -167,11 +180,23 @@ class QuizRepositoryImpl(QuizRepositoryPort):
     ) -> WeaknessAnalysis:
         """Analyze user's weak topics based on historical quiz answers"""
         async with get_db_context() as db:
-            # Get all attempts for this user on this node
+            from modules.skill_tree.infrastructure.models import UserSkillNodeModel
+            
+            # Find related IDs (User Node ID & Original Template Node ID)
+            resolved_ids = {node_id}
+            node_stmt = select(UserSkillNodeModel.id, UserSkillNodeModel.original_node_id).where(
+                (UserSkillNodeModel.id == node_id) | (UserSkillNodeModel.original_node_id == node_id)
+            )
+            res = await db.execute(node_stmt)
+            for u_id, o_id in res.fetchall():
+                if u_id: resolved_ids.add(u_id)
+                if o_id: resolved_ids.add(o_id)
+                
+            # Get all attempts for this user on this node (using resolved IDs)
             attempts_result = await db.execute(
                 select(QuizAttempt)
                 .where(QuizAttempt.user_id == user_id)
-                .where(QuizAttempt.node_id == node_id)
+                .where(QuizAttempt.node_id.in_(list(resolved_ids)))
                 .where(QuizAttempt.status == "completed")
             )
             attempts = list(attempts_result.scalars().all())
@@ -227,10 +252,22 @@ class QuizRepositoryImpl(QuizRepositoryPort):
     ) -> Optional[QuizAttempt]:
         """Get the most recent completed attempt for adaptive difficulty"""
         async with get_db_context() as db:
+            from modules.skill_tree.infrastructure.models import UserSkillNodeModel
+            
+            # Find related IDs (User Node ID & Original Template Node ID)
+            resolved_ids = {node_id}
+            node_stmt = select(UserSkillNodeModel.id, UserSkillNodeModel.original_node_id).where(
+                (UserSkillNodeModel.id == node_id) | (UserSkillNodeModel.original_node_id == node_id)
+            )
+            res = await db.execute(node_stmt)
+            for u_id, o_id in res.fetchall():
+                if u_id: resolved_ids.add(u_id)
+                if o_id: resolved_ids.add(o_id)
+                
             result = await db.execute(
                 select(QuizAttempt)
                 .where(QuizAttempt.user_id == user_id)
-                .where(QuizAttempt.node_id == node_id)
+                .where(QuizAttempt.node_id.in_(list(resolved_ids)))
                 .where(QuizAttempt.status == "completed")
                 .order_by(QuizAttempt.completed_at.desc())
                 .limit(1)

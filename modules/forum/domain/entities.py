@@ -1,7 +1,7 @@
 # Forum Domain - Entities
 # Pure domain objects without framework dependencies
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
@@ -39,6 +39,7 @@ class ForumPost:
     user_id: Optional[UUID]
     title: str
     content: str
+    images: List[str] = field(default_factory=list)
     view_count: int = 0
     is_pinned: bool = False
     is_locked: bool = False

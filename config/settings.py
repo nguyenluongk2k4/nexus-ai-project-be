@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: Optional[str] = None
     CLOUDINARY_API_SECRET: Optional[str] = None
     CLOUDINARY_FOLDER: str = "nexus_ai/uploads"
+    
+    # SMTP (Email) Settings
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = "nexusai244@gmail.com"
+    SMTP_PASSWORD: str = "yhtn myrr sivd yasc"
 
     # Context Limits
     MAX_FILE_CONTEXT_CHARS: int = 15000  # ~4k tokens, safe for flash model

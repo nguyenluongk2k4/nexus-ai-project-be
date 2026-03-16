@@ -8,6 +8,10 @@ class CoinsBalanceResponse(BaseModel):
     lifetime_earned: int
     lifetime_spent: int
 
+class ExchangeRequest(BaseModel):
+    from_currency: str  # "balance" or "coins"
+    amount: float
+
 class TransactionResponse(BaseModel):
     id: UUID
     amount: int

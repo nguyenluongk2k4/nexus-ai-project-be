@@ -177,6 +177,7 @@ class ForumRepositoryImpl(ForumRepositoryPort):
                 user_id=post.user_id,
                 title=post.title,
                 content=post.content,
+                images=post.images,
                 view_count=post.view_count,
                 is_pinned=post.is_pinned,
                 is_locked=post.is_locked,
@@ -294,6 +295,7 @@ class ForumRepositoryImpl(ForumRepositoryPort):
                 user_id=post.user_id,
                 title=post.title,
                 content=post.content,
+                images=post.images,
                 view_count=post.view_count,
                 is_pinned=post.is_pinned,
                 is_locked=post.is_locked,
@@ -422,6 +424,7 @@ class ForumRepositoryImpl(ForumRepositoryPort):
                 user_id=post.user_id,
                 title=post.title,
                 content=post.content,
+                images=post.images,
                 view_count=post.view_count,
                 is_pinned=post.is_pinned,
                 is_locked=post.is_locked,
@@ -494,6 +497,7 @@ class ForumRepositoryImpl(ForumRepositoryPort):
             user_id=post.user_id,
             title=post.title,
             content=post.content,
+            images=post.images,
             view_count=post.view_count,
             is_pinned=post.is_pinned,
             is_locked=post.is_locked,
@@ -571,7 +575,7 @@ class ForumRepositoryImpl(ForumRepositoryPort):
     # =====================================================
     
     async def create_post(
-        self, user_id: UUID, category_id: UUID, title: str, content: str
+        self, user_id: UUID, category_id: UUID, title: str, content: str, images: Optional[List[str]] = None
     ) -> ForumPost:
         """Create a new forum post"""
         from datetime import datetime
@@ -581,6 +585,7 @@ class ForumRepositoryImpl(ForumRepositoryPort):
             category_id=category_id,
             title=title,
             content=content,
+            images=images or [],
             view_count=0,
             is_pinned=False,
             is_locked=False,
@@ -593,6 +598,53 @@ class ForumRepositoryImpl(ForumRepositoryPort):
         await self.session.refresh(post)
         
         # Return enriched post
+        posts = await self._enrich_posts([post])
+        return posts[0] if posts else None
+
+    async def delete_post(self, post_id: UUID, user_id: UUID) -> bool:
+        """Delete an existing forum post (verifies user is the author)"""
+        stmt = select(ForumPostModel).where(
+            ForumPostModel.id == post_id,
+            ForumPostModel.user_id == user_id
+        )
+        result = await self.session.execute(stmt)
+        post = result.scalar_one_or_none()
+        
+        if not post:
+            return False
+            
+        await self.session.delete(post)
+        await self.session.commit()
+        return True
+    
+    async def update_post(
+        self, post_id: UUID, user_id: UUID, title: Optional[str] = None, content: Optional[str] = None, category_id: Optional[UUID] = None, images: Optional[List[str]] = None
+    ) -> Optional[ForumPost]:
+        """Update an existing forum post (verifies user is the author)"""
+        from datetime import datetime
+        
+        stmt = select(ForumPostModel).where(
+            ForumPostModel.id == post_id,
+            ForumPostModel.user_id == user_id
+        )
+        result = await self.session.execute(stmt)
+        post = result.scalar_one_or_none()
+        
+        if not post:
+            return None
+            
+        if title is not None:
+            post.title = title
+        if content is not None:
+            post.content = content
+        if category_id is not None:
+            post.category_id = category_id
+        if images is not None:
+            post.images = images
+            
+        post.updated_at = datetime.now()
+        await self.session.flush()
+        
         posts = await self._enrich_posts([post])
         return posts[0] if posts else None
     

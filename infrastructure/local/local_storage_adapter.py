@@ -27,13 +27,12 @@ class LocalStorageAdapter:
         # Move file
         shutil.copy2(source_path, destination_path)
         
-        # Generate URL
+        # Generate relative URL (to be prepended by FE if needed)
         # Assuming static mount at /static/uploads
         relative_path = f"/{settings.UPLOAD_DIR}/{unique_filename}".replace("\\", "/")
-        full_url = f"{settings.BASE_URL}{relative_path}"
         
         return {
-            "secure_url": full_url,
+            "secure_url": relative_path,
             "public_id": unique_filename,
             "bytes": os.path.getsize(destination_path),
             "format": ext.lstrip('.'),

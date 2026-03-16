@@ -13,6 +13,7 @@ import hmac
 from modules.auth.api.deps import get_current_user, get_current_user_id
 from modules.auth.domain.entities import User
 from shared.database.connection import get_db
+from shared.notification.websocket_manager import notification_manager
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,15 +77,43 @@ class SePayWebhookPayload(BaseModel):
     accumulated: int
 
 
+class CoinPackageResponse(BaseModel):
+    id: str
+    name: str
+    price: int
+    coin_amount: int
+    bonus_amount: int
+    badge_color: str
+    is_popular: bool
+
+
+class PurchasePackageResponse(BaseModel):
+    success: bool
+    message: str
+    new_balance: float
+    coins_added: int
+
+
+class ConvertBalanceRequest(BaseModel):
+    amount_vnd: int
+
+class ConvertBalanceResponse(BaseModel):
+    success: bool
+    message: str
+    vnd_deducted: int
+    coins_added: int
+    new_balance: float
+
+
 # ============================================================
 # CONFIG
 # ============================================================
 
 # SePay config - should be in .env
-SEPAY_BANK_NAME = "MB Bank"
-SEPAY_ACCOUNT_NUMBER = "0828959442"
-SEPAY_ACCOUNT_NAME = "DINH THANH TUNG"
-SEPAY_QR_TEMPLATE = "https://qr.sepay.vn/img?acc={account}&bank=MBBank&amount={amount}&des={content}"
+SEPAY_BANK_NAME = "TP Bank"
+SEPAY_ACCOUNT_NUMBER = "12524042004"
+SEPAY_ACCOUNT_NAME = "NEXUS AI"
+SEPAY_QR_TEMPLATE = "https://qr.sepay.vn/img?acc={account}&bank=TPBank&amount={amount}&des={content}"
 SEPAY_WEBHOOK_SECRET = ""  # Set in .env for production
 
 # Transaction expiry time
@@ -231,7 +260,7 @@ async def sepay_webhook(
     # Find matching pending transaction
     result = await session.execute(
         text("""
-            SELECT id, user_id, amount, balance_after
+            SELECT id, user_id, type, amount, balance_after
             FROM transactions
             WHERE transaction_code = :code
             AND status = 'pending'
@@ -268,18 +297,44 @@ async def sepay_webhook(
         }
     )
     
-    # Update user balance
-    await session.execute(
-        text("""
-            UPDATE users
-            SET balance = COALESCE(balance, 0) + :amount
-            WHERE id = :user_id
-        """),
-        {
-            "amount": transaction.amount,
-            "user_id": str(transaction.user_id)
-        }
-    )
+    if transaction.type == "package_purchase":
+        # Handle direct package purchase (add coins instead of VNĐ balance)
+        try:
+            from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository
+            from modules.coins.domain.services.coins_service import CoinsService
+            
+            coins_repo = SQLAlchemyCoinsRepository(session)
+            coins_service = CoinsService(coins_repo)
+            
+            # The exact number of coins to add should ideally be fetched from the transaction metadata or the package DB
+            # For direct buys without balance, we fetch the package details based on the amount paid or metadata if we added it
+            # But wait, we can just extract the package from the transaction amount, or better:
+            # Let's verify the package directly if we saved package_id in transaction.note or something similar.
+            # Assuming we save package total coins in `balance_after` temporarily if `type` == 'package_purchase'
+            # (See the modified /purchase/packages/{package_id}/direct endpoint below)
+            total_coins_to_award = int(transaction.balance_after)
+            
+            await coins_service.award_coins(
+                user_id=transaction.user_id,
+                amount=total_coins_to_award,
+                transaction_type='package_purchase',
+                description=f"Direct purchase via bank transfer ({transaction_code})"
+            )
+        except Exception as e:
+            print(f"Failed to award coins for direct package purchase: {e}")
+    else:
+        # Default behavior: Update user balance (VNĐ deposit)
+        await session.execute(
+            text("""
+                UPDATE users
+                SET balance = COALESCE(balance, 0) + :amount
+                WHERE id = :user_id
+            """),
+            {
+                "amount": transaction.amount,
+                "user_id": str(transaction.user_id)
+            }
+        )
     
     await session.commit()
     
@@ -401,6 +456,302 @@ async def get_balance(
     balance = float(result.scalar() or 0)
     
     return {"balance": balance}
+
+
+# ============================================================
+# COIN PACKAGES
+# ============================================================
+
+@router.get(
+    "/packages",
+    response_model=list[CoinPackageResponse],
+    summary="Lấy danh sách các gói nạp xu"
+)
+async def get_coin_packages(session: AsyncSession = Depends(get_db)):
+    """Lấy danh sách các gói nạp Xu đang bán"""
+    result = await session.execute(
+        text("""
+            SELECT id, name, price, coin_amount, bonus_amount, badge_color, is_popular
+            FROM coin_packages
+            WHERE is_active = TRUE
+            ORDER BY display_order ASC
+        """)
+    )
+    
+    packages = []
+    for row in result.fetchall():
+        packages.append(CoinPackageResponse(
+            id=row.id,
+            name=row.name,
+            price=int(row.price),
+            coin_amount=row.coin_amount,
+            bonus_amount=row.bonus_amount or 0,
+            badge_color=row.badge_color or "#8B5CF6",
+            is_popular=row.is_popular or False
+        ))
+    return packages
+
+
+@router.post(
+    "/packages/{package_id}/buy-with-balance",
+    response_model=PurchasePackageResponse,
+    summary="Mua gói xu bằng số dư VNĐ (Tự động cộng xu)"
+)
+async def buy_package_with_balance(
+    package_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Mua gói xu bằng số dư có sẵn trong ví.
+    Trừ balance và cộng xu trực tiếp (realtime push).
+    """
+    # 1. Fetch package
+    pkg_result = await session.execute(
+        text("SELECT id, name, price, coin_amount, bonus_amount FROM coin_packages WHERE id = :pid AND is_active = TRUE"),
+        {"pid": package_id}
+    )
+    pkg = pkg_result.fetchone()
+    if not pkg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gói không tồn tại hoặc đã ngừng bán")
+        
+    price = float(pkg.price)
+    total_coins = pkg.coin_amount + (pkg.bonus_amount or 0)
+    
+    # 2. Check balance
+    user_result = await session.execute(
+        text("SELECT COALESCE(balance, 0) as balance FROM users WHERE id = :user_id"),
+        {"user_id": str(user.id)}
+    )
+    current_balance = float(user_result.fetchone().balance)
+    
+    if current_balance < price:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Số dư không đủ. Cần {price:,.0f}đ, hiện có {current_balance:,.0f}đ"
+        )
+        
+    new_balance = current_balance - price
+    
+    # 3. Deduct balance
+    await session.execute(
+        text("UPDATE users SET balance = :new_balance WHERE id = :user_id"),
+        {"new_balance": new_balance, "user_id": str(user.id)}
+    )
+    
+    # 4. Record transaction (Purchased via balance)
+    await session.execute(
+        text("""
+            INSERT INTO transactions (user_id, type, amount, balance_before, balance_after, status, note)
+            VALUES (:user_id, 'package_purchase', :amount, :before, :after, 'completed', :note)
+        """),
+        {
+            "user_id": str(user.id),
+            "amount": price,
+            "before": current_balance,
+            "after": new_balance,
+            "note": f"Mua gói xu {pkg.name} bằng số dư"
+        }
+    )
+    
+    await session.commit()
+
+    await notification_manager.send_personal_message(str(user.id), {
+        "type": "wallet_balance_update",
+        "current_balance": new_balance
+    })
+    
+    # 5. Award coins (This automatically triggers the websocket notification)
+    try:
+        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository
+        from modules.coins.domain.services.coins_service import CoinsService
+        
+        coins_repo = SQLAlchemyCoinsRepository(session)
+        coins_service = CoinsService(coins_repo)
+        
+        await coins_service.award_coins(
+            user_id=user.id,
+            amount=total_coins,
+            transaction_type='package_purchase',
+            description=f"Mua thẻ {pkg.name}"
+        )
+    except Exception as e:
+        print(f"Failed to award coins: {e}")
+        
+    return PurchasePackageResponse(
+        success=True,
+        message=f"Mua thành công gói {pkg.name}! Nhận được {total_coins} xu.",
+        new_balance=new_balance,
+        coins_added=total_coins
+    )
+
+
+@router.post(
+    "/packages/{package_id}/buy-direct",
+    response_model=TransactionResponse,
+    summary="Mua gói xu trực tiếp bằng mã QR (Chuyển khoản)"
+)
+async def buy_package_direct(
+    package_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Tạo QR chuyển khoản riêng để mua ngay gói Xu này tự động, không qua số dư.
+    """
+    # 1. Fetch package
+    pkg_result = await session.execute(
+        text("SELECT id, name, price, coin_amount, bonus_amount FROM coin_packages WHERE id = :pid AND is_active = TRUE"),
+        {"pid": package_id}
+    )
+    pkg = pkg_result.fetchone()
+    if not pkg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gói không tồn tại hoặc đã ngừng bán")
+        
+    price = float(pkg.price)
+    total_coins = pkg.coin_amount + (pkg.bonus_amount or 0)
+    
+    transaction_code = generate_transaction_code()
+    transaction_id = uuid4()
+    expires_at = datetime.now() + timedelta(minutes=TRANSACTION_EXPIRY_MINUTES)
+    
+    # 2. Record pending transaction
+    # We store the total_coins in balance_after to remember how many coins to award when the webhook hits
+    await session.execute(
+        text("""
+            INSERT INTO transactions (
+                id, user_id, type, amount, 
+                balance_before, balance_after,
+                transaction_code, payment_method, status,
+                created_at, expires_at, note
+            ) VALUES (
+                :id, :user_id, 'package_purchase', :amount,
+                0, :coins_to_award,
+                :code, 'sepay_qr', 'pending',
+                NOW(), :expires_at, :note
+            )
+        """),
+        {
+            "id": str(transaction_id),
+            "user_id": str(user.id),
+            "amount": price,
+            "coins_to_award": total_coins,  # Saving intent for the webhook
+            "code": transaction_code,
+            "expires_at": expires_at,
+            "note": f"Thanh toán trực tiếp gói {pkg.name}"
+        }
+    )
+    await session.commit()
+    
+    # 3. Generate QR URL
+    qr_url = generate_qr_url(int(price), transaction_code)
+    
+    return TransactionResponse(
+        id=str(transaction_id),
+        transaction_code=transaction_code,
+        amount=int(price),
+        status="pending",
+        qr_url=qr_url,
+        bank_name=SEPAY_BANK_NAME,
+        account_number=SEPAY_ACCOUNT_NUMBER,
+        account_name=SEPAY_ACCOUNT_NAME,
+        transfer_content=transaction_code,
+        expires_at=expires_at,
+        created_at=datetime.now()
+    )
+
+
+@router.post(
+    "/convert-balance-to-coins",
+    response_model=ConvertBalanceResponse,
+    summary="Đổi trực tiếp số dư VNĐ ra Xu lẻ"
+)
+async def convert_balance_to_coins(
+    data: ConvertBalanceRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Cho phép user đổi trực tiếp tiền VNĐ lẻ trong balance ra Xu lẻ (không mua theo gói).
+    Tỷ lệ quy đổi: 200 VNĐ = 1 Xu (hoặc tuỳ chỉnh)
+    Vd: 3,000đ = 15 Xu.
+    """
+    if data.amount_vnd < 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Số tiền quy đổi tối thiểu là 200 VNĐ"
+        )
+        
+    vnd_to_deduct = data.amount_vnd
+    coins_to_add = vnd_to_deduct // 200  # 200đ = 1 Xu
+    
+    # 1. Check balance
+    user_result = await session.execute(
+        text("SELECT COALESCE(balance, 0) as balance FROM users WHERE id = :user_id"),
+        {"user_id": str(user.id)}
+    )
+    current_balance = float(user_result.fetchone().balance)
+    
+    if current_balance < vnd_to_deduct:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Số dư không đủ. Cần {vnd_to_deduct:,.0f}đ, hiện có {current_balance:,.0f}đ"
+        )
+        
+    new_balance = current_balance - vnd_to_deduct
+    
+    # 2. Deduct balance
+    await session.execute(
+        text("UPDATE users SET balance = :new_balance WHERE id = :user_id"),
+        {"new_balance": new_balance, "user_id": str(user.id)}
+    )
+    
+    # 3. Record transaction
+    await session.execute(
+        text("""
+            INSERT INTO transactions (user_id, type, amount, balance_before, balance_after, status, note)
+            VALUES (:user_id, 'package_purchase', :amount, :before, :after, 'completed', :note)
+        """),
+        {
+            "user_id": str(user.id),
+            "amount": vnd_to_deduct,
+            "before": current_balance,
+            "after": new_balance,
+            "note": f"Đổi {vnd_to_deduct:,.0f}đ sang {coins_to_add} Xu"
+        }
+    )
+    
+    await session.commit()
+
+    await notification_manager.send_personal_message(str(user.id), {
+        "type": "wallet_balance_update",
+        "current_balance": new_balance
+    })
+    
+    # 4. Award coins
+    try:
+        from modules.coins.infrastructure.repository import SQLAlchemyCoinsRepository
+        from modules.coins.domain.services.coins_service import CoinsService
+        
+        coins_repo = SQLAlchemyCoinsRepository(session)
+        coins_service = CoinsService(coins_repo)
+        
+        await coins_service.award_coins(
+            user_id=user.id,
+            amount=coins_to_add,
+            transaction_type='balance_conversion',
+            description=f"Đổi {vnd_to_deduct:,.0f}đ sang Xu"
+        )
+    except Exception as e:
+        print(f"Failed to award coins for conversion: {e}")
+        
+    return ConvertBalanceResponse(
+        success=True,
+        message=f"Đổi thành công {vnd_to_deduct:,.0f}đ lấy {coins_to_add} xu!",
+        vnd_deducted=vnd_to_deduct,
+        coins_added=coins_to_add,
+        new_balance=new_balance
+    )
 
 
 # ============================================================

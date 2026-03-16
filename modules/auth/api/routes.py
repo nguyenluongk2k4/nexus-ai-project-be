@@ -5,8 +5,14 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from modules.auth.api.schemas import (
     RegisterRequest, LoginRequest, 
-    UserResponse, AuthResponse
+    UserResponse, AuthResponse,
+    ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
 )
+import redis.asyncio as aioredis
+import random
+import string
+import uuid
+from modules.auth.domain.services.email_service import get_email_service
 from modules.auth.providers import (
     get_user_repository, get_jwt_service, get_password_service, get_complete_tour_use_case
 )
@@ -331,6 +337,115 @@ async def login(data: LoginRequest):
 
 
 @router.post(
+    "/forgot-password",
+    summary="Yêu cầu OTP gửi qua email để reset mật khẩu"
+)
+async def forgot_password(data: ForgotPasswordRequest):
+    user_repo = get_user_repository()
+    email_service = get_email_service()
+    
+    # 1. Verify user exists
+    user = await user_repo.get_by_email(data.email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email không tồn tại trong hệ thống. Vui lòng kiểm tra lại."
+        )
+    
+    # 2. Generate 6-digit OTP
+    otp = ''.join(random.choices(string.digits, k=6))
+    
+    # 3. Store in Redis (TTL: 120 seconds)
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        await redis_client.setex(f"reset_otp:{data.email}", 120, otp)
+    finally:
+        await redis_client.close()
+        
+    # 4. Send Email
+    email_sent = await email_service.send_otp_email(data.email, otp)
+    if not email_sent:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Xin lỗi, hiện tại không thể gửi email. Vui lòng thử lại sau."
+        )
+        
+    return {"status": "success", "message": "OTP has been sent to your email."}
+
+
+@router.post(
+    "/verify-otp",
+    summary="Xác nhận mã OTP"
+)
+async def verify_otp(data: VerifyOtpRequest):
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        stored_otp = await redis_client.get(f"reset_otp:{data.email}")
+        
+        if not stored_otp:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP đã hết hạn hoặc không tồn tại."
+            )
+            
+        if stored_otp != data.otp:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mã OTP không chính xác."
+            )
+            
+        # OTP is correct, delete it and create a reset token
+        await redis_client.delete(f"reset_otp:{data.email}")
+        
+        reset_token = str(uuid.uuid4())
+        # Store reset token for 5 minutes
+        await redis_client.setex(f"reset_token:{data.email}", 300, reset_token)
+        
+        return {
+            "status": "success", 
+            "message": "OTP verified successfully.",
+            "reset_token": reset_token
+        }
+    finally:
+        await redis_client.close()
+
+
+@router.post(
+    "/reset-password",
+    summary="Đổi mật khẩu mới"
+)
+async def reset_password(data: ResetPasswordRequest):
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    user_repo = get_user_repository()
+    password_service = get_password_service()
+    
+    try:
+        stored_token = await redis_client.get(f"reset_token:{data.email}")
+        
+        if not stored_token or stored_token != data.reset_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn."
+            )
+            
+        # Token is valid, update user
+        user = await user_repo.get_by_email(data.email)
+        if not user:
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Người dùng không tồn tại."
+            )
+            
+        user.password_hash = password_service.hash_password(data.new_password)
+        await user_repo.update(user)
+        
+        # Clean up token
+        await redis_client.delete(f"reset_token:{data.email}")
+        
+        return {"status": "success", "message": "Mật khẩu đã được thay đổi thành công."}
+    finally:
+        await redis_client.close()
+@router.post(      
     "/admin/login",
     response_model=AuthResponse,
     summary="Đăng nhập cho Admin"
