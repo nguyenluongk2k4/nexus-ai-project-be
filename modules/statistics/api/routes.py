@@ -107,7 +107,7 @@ async def get_overview_stats(
     revenue_query = """
         SELECT COALESCE(SUM(amount), 0) FROM transactions 
         WHERE status = 'completed'
-        AND type IN ('deposit', 'subscription', 'purchase')
+        AND type IN ('deposit')
     """
     if start_date and end_date:
         revenue_query += " AND created_at BETWEEN :start_date AND :end_date"
